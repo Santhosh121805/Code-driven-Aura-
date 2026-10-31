@@ -1,0 +1,14 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: Forcepoint DLP
+  category: DLP
+  api_style: REST pull
+  auth: Session login (refresh-token call returns an access token)
+  paging: unverified
+  endpoint: unverified (incidents call shape)
+  docs: https://help.forcepoint.com/dlp/10.4.0/restapi/A0AEF442-C3FC-48C2-8A21-BD82922CD645.html
+  verification: verified
+  needs:
+  - session_login
+  notes: Token flow from Forcepoint's official docs (session_login now supported); the incidents request was not confirmed.

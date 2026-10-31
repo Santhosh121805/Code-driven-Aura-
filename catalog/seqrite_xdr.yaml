@@ -1,0 +1,13 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: Seqrite XDR
+  category: EDR
+  api_style: none public
+  auth: unverified
+  paging: unverified
+  endpoint: unverified
+  docs: https://docs.seqrite.com
+  verification: unverified
+  needs: []
+  notes: No public API reference found.

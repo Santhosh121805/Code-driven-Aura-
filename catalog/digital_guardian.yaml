@@ -1,0 +1,14 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: Digital Guardian
+  category: DLP
+  api_style: REST pull (ARC export)
+  auth: OAuth2 client credentials
+  paging: Export bookmark advanced by an acknowledge call
+  endpoint: GET /rest/1.0/export/{export profile GUID}
+  docs: https://docs.cloud.google.com/chronicle/docs/ingestion/default-parsers/digitalguardian-edr
+  verification: partial
+  needs:
+  - export_acknowledge
+  notes: Each chunk must be acknowledged before the next export.

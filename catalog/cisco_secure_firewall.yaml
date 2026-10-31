@@ -1,0 +1,14 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: Cisco Secure Firewall
+  category: Firewall
+  api_style: REST pull (FMC)
+  auth: 'Session login (generatetoken: Basic in, token in a response header)'
+  paging: unverified
+  endpoint: unverified (events via REST)
+  docs: https://ciscolearning.github.io/cisco-learning-codelabs/posts/fmc-rest-token-authentication
+  verification: verified
+  needs:
+  - session_login
+  notes: Token flow verified (session_login with token_response_header); FMC event retrieval over REST was not confirmed.

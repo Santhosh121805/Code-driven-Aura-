@@ -1,0 +1,13 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: Juniper SRX
+  category: Firewall
+  api_style: REST pull (Junos REST API, RPC over HTTP)
+  auth: Basic
+  paging: unverified
+  endpoint: unverified (log RPC)
+  docs: https://www.juniper.net/documentation/us/en/software/junos/rest-api/topics/concept/rest-api-overview.html
+  verification: verified
+  needs: []
+  notes: Basic auth and /rpc calls verified; which RPC returns security logs was not confirmed.

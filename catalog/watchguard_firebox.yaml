@@ -1,0 +1,13 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: WatchGuard Firebox
+  category: Firewall
+  api_style: REST pull (WatchGuard Cloud)
+  auth: OAuth2 client credentials + WatchGuard-API-Key header
+  paging: unverified
+  endpoint: unverified (Firebox events)
+  docs: https://www.watchguard.com/help/docs/API/Content/en-US/api_get_started/get_started.html
+  verification: verified
+  needs: []
+  notes: Auth verified (token via Basic with the Access ID); Firebox event endpoints were not confirmed.

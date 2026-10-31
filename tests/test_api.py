@@ -16,7 +16,7 @@ def test_schema_endpoint_describes_streams():
 def test_validate_returns_friendly_errors():
     r = client.post("/api/integrations/validate", json={"config": {**OKTA_CONFIG, "auth": {"type": "magic"}}})
     assert r.status_code == 422
-    assert r.json()["errors"] == ["auth.type must be one of: none, bearer, api_key, basic, oauth2_client_credentials"]
+    assert r.json()["errors"] == ["auth.type must be one of: none, bearer, api_key, basic, oauth2_client_credentials, session_login"]
 
 
 def test_validate_accepts_yaml_and_never_contains_secret_values():

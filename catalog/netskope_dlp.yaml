@@ -1,0 +1,41 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: Netskope DLP
+  category: DLP
+  api_style: REST pull (data export iterator)
+  auth: API token header (Netskope-Api-Token)
+  paging: Server-side iterator (index + operation=next)
+  endpoint: GET /api/v2/events/dataexport/alerts/dlp
+  docs: https://docs.netskope.com/en/rest-api-v2-overview/
+  verification: partial
+  needs: []
+  notes: Endpoint and header from Netskope's docs; record field names should be checked against a real sample.
+template:
+  name: netskope_dlp
+  display_name: Netskope DLP
+  enabled: true
+  base_url: https://${NETSKOPE_TENANT}.goskope.com
+  auth:
+    type: api_key
+    header: Netskope-Api-Token
+    api_key: ${netskope_token}
+  streams:
+  - name: dlp_alerts
+    entity: event
+    endpoint: /api/v2/events/dataexport/alerts/dlp
+    params:
+      index: plugsec
+      operation: next
+    records_path: result
+    mapping:
+      id: _id
+      type: alert_type
+      severity: dlp_rule_severity
+      timestamp: timestamp
+      description: alert_name
+      user: user
+    transforms:
+      time_format: epoch_s
+      default_severity: medium
+  schedule_seconds: 900

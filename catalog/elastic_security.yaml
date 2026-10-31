@@ -1,0 +1,14 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: Elastic Security
+  category: SIEM
+  api_style: REST pull (POST search with Elasticsearch query DSL)
+  auth: 'API key (Authorization: ApiKey)'
+  paging: In the request body (from/size or search_after)
+  endpoint: POST /api/detection_engine/signals/search
+  docs: https://www.elastic.co/docs/reference/elastic-cli/cli/stack/kb/security-detections-api
+  verification: partial
+  needs:
+  - body_pagination
+  notes: Endpoint and ApiKey header from third-party integration docs; the official page found is a CLI reference.

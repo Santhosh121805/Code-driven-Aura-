@@ -1,0 +1,14 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: Wiz
+  category: Cloud security
+  api_style: GraphQL
+  auth: OAuth2 client credentials (with audience)
+  paging: GraphQL cursor (after / pageInfo.endCursor)
+  endpoint: POST /graphql (issues query)
+  docs: https://www.scribd.com/document/810029023/Using-the-Wiz-API
+  verification: partial
+  needs:
+  - body_pagination
+  notes: 'GraphQL: the cursor goes into the request body''s variables; the token request also needs an audience field.'

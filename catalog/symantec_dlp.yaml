@@ -1,0 +1,14 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: Symantec DLP
+  category: DLP
+  api_style: REST pull (Enforce Incident API)
+  auth: Basic (15.x) / forms login (16.x)
+  paging: In the request body
+  endpoint: POST incidents query (Enforce REST)
+  docs: https://knowledge.broadcom.com/external/article/215336/incident-reporting-and-update-restful-ap.html
+  verification: partial
+  needs:
+  - body_pagination
+  notes: Broadcom KB samples; DLP 16.0 accepts forms-based login only.

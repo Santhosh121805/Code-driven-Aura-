@@ -1,0 +1,14 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: Palo Alto Cortex XSIAM
+  category: SIEM
+  api_style: REST pull
+  auth: API key + x-xdr-auth-id headers
+  paging: In the request body (request_data.search_from / search_to)
+  endpoint: POST /public_api/v1/alerts/get_alerts
+  docs: https://docs-cortex.paloaltonetworks.com/r/Cortex-XSIAM-REST-API/Get-all-Alerts
+  verification: verified
+  needs:
+  - body_pagination
+  notes: Paging values live inside the JSON request body.

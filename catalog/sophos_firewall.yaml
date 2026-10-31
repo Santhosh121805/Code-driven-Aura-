@@ -1,0 +1,14 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: Sophos Firewall
+  category: Firewall
+  api_style: XML API
+  auth: Credentials inside each XML request
+  paging: n/a
+  endpoint: POST /webconsole/APIController (reqxml)
+  docs: https://www.avanet.com/en/kb/sophos-firewall-api-zugriff-absichern/
+  verification: partial
+  needs:
+  - xml_api
+  notes: Requests and responses are XML, not JSON.

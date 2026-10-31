@@ -1,0 +1,13 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: ManageEngine Log360
+  category: SIEM
+  api_style: REST pull
+  auth: Bearer auth token (scoped, from API Settings)
+  paging: unverified
+  endpoint: 'POST /RestAPI/v1/alerts (v1: no new tokens; supported until Sep 2026)'
+  docs: https://www.manageengine.com/log-management/help/api-settings/synchronous-alert.html
+  verification: partial
+  needs: []
+  notes: 'Official docs: v1 alert APIs no longer issue new tokens; the v2 alert endpoint is not confirmed in public docs.'

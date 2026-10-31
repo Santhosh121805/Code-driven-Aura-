@@ -1,0 +1,14 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: Zscaler DLP
+  category: DLP
+  api_style: Push (Nanolog Streaming Service) / ZIA API
+  auth: Session with obfuscated API key + timestamp
+  paging: unverified
+  endpoint: unverified (DLP events via API)
+  docs: https://pyzscaler.readthedocs.io/en/latest/zs/zia/session.html
+  verification: unverified
+  needs:
+  - push_receiver
+  notes: ZIA sessions need a custom key obfuscation; DLP events are normally streamed (push), not pulled.

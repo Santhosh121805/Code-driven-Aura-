@@ -1,0 +1,14 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: Google Security Command Center
+  category: Cloud security
+  api_style: REST pull
+  auth: OAuth2 via service-account JWT
+  paging: pageToken / nextPageToken
+  endpoint: GET v2 .../sources/-/findings
+  docs: https://googleapis.github.io/google-api-python-client/docs/dyn/securitycenter_v1.projects.sources.findings.html
+  verification: partial
+  needs:
+  - service_account_jwt
+  notes: Paging fits the cursor type; the token needs a signed service-account JWT.

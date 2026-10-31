@@ -1,0 +1,14 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: SonicWall
+  category: Firewall
+  api_style: REST pull (SonicOS API)
+  auth: Session login (Digest / CHAP / Basic on /api/sonicos/auth)
+  paging: unverified
+  endpoint: unverified (log endpoint)
+  docs: https://www.sonicwall.com/support/technical-documentation/docs/sonicos-7-0-0-0-api/Content/SonicOS_API_Guide/API_Authentication/authentication-methods.htm
+  verification: verified
+  needs:
+  - session_login
+  notes: Login methods verified; only one API session at a time; the log endpoint was not confirmed.

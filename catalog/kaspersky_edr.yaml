@@ -1,0 +1,15 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: Kaspersky EDR
+  category: EDR
+  api_style: RPC-style Open API (KLOAPI, Security Center)
+  auth: Session (Basic / KSC token / web token)
+  paging: unverified
+  endpoint: unverified (EDR-specific endpoints)
+  docs: https://support.kaspersky.com/help/KSC/15.1/KSCAPI/index.html
+  verification: partial
+  needs:
+  - session_login
+  - rpc_api
+  notes: Security Center's Open API is RPC-style with sessions; EDR Optimum's own API was not found.

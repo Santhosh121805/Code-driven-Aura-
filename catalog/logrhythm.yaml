@@ -1,0 +1,13 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: LogRhythm
+  category: SIEM
+  api_style: REST pull
+  auth: Bearer token (third-party application token)
+  paging: unverified
+  endpoint: unverified (alarms endpoint)
+  docs: https://developers.exabeam.com/logrhythm-siem/docs/authentication-and-bearer-token-usage
+  verification: partial
+  needs: []
+  notes: Bearer auth confirmed in Exabeam's LogRhythm developer docs; the alarms list path was not confirmed.

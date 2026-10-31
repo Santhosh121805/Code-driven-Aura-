@@ -1,0 +1,14 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: Trellix DLP
+  category: DLP
+  api_style: REST pull (ePO on-prem)
+  auth: ePO credentials
+  paging: Incident IDs since a time (max 1000), then details per ID
+  endpoint: Incident ID list + incident details
+  docs: https://docs.trellix.com/data-and-email/docs/rest-api-call-to-retrieve-incident-ids
+  verification: verified
+  needs:
+  - id_lookup
+  notes: 'Two calls per record: list IDs, then fetch details.'

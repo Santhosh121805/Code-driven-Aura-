@@ -5,6 +5,8 @@ A revoked secret leaves a tombstone, so the environment fallback can no longer r
 """
 from __future__ import annotations
 
+import json
+
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -49,7 +51,7 @@ def parse_age_overrides(text: str | None) -> dict[str, int]:
 def secret_refs(cfg: Any) -> list[str]:
     """Names of all ${VAR} references in a connector's (or action's) auth and headers."""
     auth = getattr(cfg, "auth", None) or cfg.request.auth  # actions keep auth under request
-    values = [v for v in auth.model_dump().values() if isinstance(v, str)]
+    values = [json.dumps(auth.model_dump())]  # nested too: session-login bodies and headers carry ${NAME}s
     values += list(getattr(cfg, "headers", {}).values())
     values += list(getattr(getattr(cfg, "request", None), "headers", {}).values())
     if getattr(cfg, "auth", None) is None:

@@ -54,6 +54,7 @@ def test_public_pages_call_only_public_endpoints_and_show_no_live_data():
     from integration_platform.embed_configs import BLOCK
     for name in ("landing.html", "docs.html", "login.html", "site.js"):
         text = BLOCK.sub("", (STATIC / name).read_text(encoding="utf-8"))  # embedded YAML shows third-party API paths as text
+        text = re.sub(r"<pre\b.*?</pre>", "", text, flags=re.S)  # docs code examples show vendor API paths, not our calls
         calls = set(re.findall(r"/api/[a-z0-9_/{}-]+", text))
         assert calls <= PUBLIC_API_CALLS, (name, calls - PUBLIC_API_CALLS)
 

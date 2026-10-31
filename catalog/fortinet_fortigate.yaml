@@ -1,0 +1,53 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: Fortinet FortiGate
+  category: Firewall
+  api_style: REST pull
+  auth: 'API token (Authorization: Bearer)'
+  paging: Offset (start / rows, total_lines)
+  endpoint: GET /api/v2/log/memory/event/system
+  docs: https://docs.fortinet.com/document/fortigate/7.4.7/administration-guide/940602
+  verification: partial
+  needs: []
+  notes: Bearer token from Fortinet's admin guide; log path from a Fortinet community tip; start/rows/total_lines from community responses.
+template:
+  name: fortinet_fortigate
+  display_name: Fortinet FortiGate
+  enabled: true
+  base_url: https://${FORTIGATE_HOST}
+  auth:
+    type: bearer
+    token: ${fortigate_token}
+  streams:
+  - name: event_logs
+    entity: event
+    endpoint: /api/v2/log/memory/event/system
+    records_path: results
+    pagination:
+      type: offset
+      offset_param: start
+      limit_param: rows
+      limit: 500
+      total_path: total_lines
+      max_pages: 10
+    mapping:
+      id: join('-', [to_string(logid), to_string(eventtime)])
+      type: logdesc
+      severity: level
+      timestamp: join(' ', [date, time])
+      description: msg
+      host: devname
+      src_ip: srcip
+      user: user
+    transforms:
+      severity_map:
+        emergency: critical
+        alert: critical
+        critical: critical
+        error: high
+        warning: medium
+        notice: low
+        information: info
+        debug: info
+  schedule_seconds: 900

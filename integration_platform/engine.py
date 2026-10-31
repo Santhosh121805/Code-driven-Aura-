@@ -21,10 +21,11 @@ import jmespath
 from jinja2.sandbox import SandboxedEnvironment
 
 from integration_platform.config import (
-    AuthApiKey, AuthBasic, AuthBearer, AuthOAuth2, IntegrationConfig, MissingSecretError, PaginationCursor,
-    PaginationLink, PaginationNone, PaginationOffset, PaginationPage, RateLimitSpec, RetrySpec, Stream, lookup_ref,
+    AuthApiKey, AuthBasic, AuthBearer, AuthOAuth2, AuthSessionLogin, IntegrationConfig, MissingSecretError, PaginationCursor,
+    PaginationLink, PaginationNone, PaginationOffset, PaginationPage, RateLimitSpec, RetrySpec, Stream, env_refs, lookup_ref,
     resolve_env,
 )
+from integration_platform import logmask
 from integration_platform.logmask import mask_text
 from integration_platform.normaliser import BadRecord, normalise
 
@@ -33,6 +34,7 @@ TRANSIENT_STATUS = {500, 502, 503, 504}
 Sleep = Callable[[float], Awaitable[None]]
 _jinja = SandboxedEnvironment()
 _oauth_cache: dict[tuple[str, str], tuple[str, float]] = {}  # (token_url, client_id) -> (token, expires_at)
+_session_cache: dict[tuple[str, str], tuple[str, float]] = {}  # (login_url, auth config) -> (token, expires_at)
 
 
 class EngineError(Exception):
@@ -199,13 +201,25 @@ def check_response(resp: httpx.Response, auth_hint: str = "") -> Any:
 
 # ---------------------------------------------------------------- auth
 def _auth_hint(auth: Any) -> str:
-    refs = [v for k, v in auth.model_dump().items() if isinstance(v, str) and v.startswith("${")]
+    refs = sorted(f"${{{name}}}" for name in env_refs(auth.model_dump()))
     return f"Check the value of {', '.join(refs)}." if refs else ""
 
 
 def clear_oauth_cache() -> None:
-    """Forget cached OAuth2 access tokens (after a 401, or when a connector's secret is revoked)."""
+    """Forget cached OAuth2 and session-login tokens (after a 401, or when a connector's secret is revoked)."""
     _oauth_cache.clear()
+    _session_cache.clear()
+
+
+def _resolve_deep(value: Any) -> Any:
+    """${VAR} references resolved inside nested login bodies."""
+    if isinstance(value, str):
+        return resolve_env(value)
+    if isinstance(value, dict):
+        return {k: _resolve_deep(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_resolve_deep(v) for v in value]
+    return value
 
 
 def _optional_missing(ref: str) -> bool:
@@ -242,6 +256,30 @@ async def apply_auth(client: httpx.AsyncClient, auth: Any, base_url: str, retry:
             raise EngineError(f"OAuth2 token endpoint {token_url} did not return an access_token")
         _oauth_cache[(token_url, client_id)] = (token, time.time() + float(body.get("expires_in", 300)))
         return {"Authorization": f"Bearer {token}"}, None
+    if isinstance(auth, AuthSessionLogin):
+        login_url = auth.login_url if auth.login_url.startswith("http") else base_url + auth.login_url
+        key = (login_url, auth.model_dump_json())
+        cached = _session_cache.get(key)
+        if cached and cached[1] > time.time():
+            return {auth.header: f"{auth.prefix}{cached[0]}"}, None
+        basic = httpx.BasicAuth(resolve_env(auth.username), resolve_env(auth.password)) if auth.username else None
+        send: dict[str, Any] = {"headers": {k: resolve_env(v) for k, v in auth.headers.items()}, "auth": basic}
+        if auth.body:
+            send["json"] = _resolve_deep(auth.body)
+        resp = await send_with_retry(client, auth.method, login_url, retry, stats, sleep, **send)
+        if auth.token_response_header:  # e.g. Cisco FMC: the token comes back in a header, the body may be empty
+            if resp.status_code >= 400:
+                check_response(resp, _auth_hint(auth))  # raises: Authentication failed / HTTP error
+            token = resp.headers.get(auth.token_response_header)
+        else:
+            token = jmespath.search(auth.token_path, check_response(resp, _auth_hint(auth)))
+        if not token or not isinstance(token, (str, int)):
+            where = f"header {auth.token_response_header}" if auth.token_response_header else f"'{auth.token_path}' in the response"
+            raise EngineError(f"Login at {login_url} succeeded but no token was found ({where})")
+        token = str(token)
+        logmask.remember(token)  # never show the session token in logs or stored errors
+        _session_cache[key] = (token, time.time() + auth.ttl_seconds)
+        return {auth.header: f"{auth.prefix}{token}"}, None
     return {}, None
 
 
@@ -342,7 +380,7 @@ async def fetch_records(cfg: IntegrationConfig, stream: Stream, last_sync: str |
                 body_json = stream.body if stream.method == "POST" else None
                 send = dict(params=params, headers=headers, auth=auth, json=body_json)
                 resp = await send_with_retry(client, stream.method, page_url, cfg.retry, stats, sleep, cfg.rate_limit, **send)
-                if resp.status_code == 401 and isinstance(cfg.auth, AuthOAuth2) and not refreshed:
+                if resp.status_code == 401 and isinstance(cfg.auth, (AuthOAuth2, AuthSessionLogin)) and not refreshed:
                     # Cached access token expired or was invalidated server-side: get a fresh one once.
                     refreshed = True
                     clear_oauth_cache()

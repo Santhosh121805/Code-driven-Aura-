@@ -26,7 +26,7 @@ ENV_FILE = os.environ.get("INTEGRATION_HUB_ENV_FILE", str(ROOT / ".env"))  # tes
 if ENV_FILE:
     load_dotenv(ENV_FILE, override=False)  # before anything reads secrets
 
-from integration_platform import ai_mapper, auth, demo, demo_mock, logmask  # noqa: E402
+from integration_platform import ai_mapper, auth, catalog, demo, demo_mock, logmask  # noqa: E402
 from integration_platform.actions import ActionRunner  # noqa: E402
 from integration_platform.alerts import FailureAlerter  # noqa: E402
 from integration_platform.db import TABLES, Database  # noqa: E402
@@ -371,6 +371,13 @@ async def github_repo() -> dict[str, Any]:
             "pushed_at": d.get("pushed_at")}
     _repo_cache[key] = {"at": datetime.now(timezone.utc), "data": data}
     return {**data, "dependabot": counts}
+
+
+@app.get("/api/catalog")
+def integration_catalog() -> dict[str, Any]:
+    """Tools customers use, with research notes, a status per tool and the capability gap table. Every role may read it;
+    'Use template' only pre-fills the wizard, which is admin only."""
+    return catalog.catalog_view(set(state.registry.integrations))
 
 
 @app.get("/api/schema")

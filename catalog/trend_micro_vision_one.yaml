@@ -1,0 +1,43 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: Trend Micro Vision One
+  category: EDR
+  api_style: REST pull
+  auth: Bearer API key
+  paging: Next link in the body (nextLink)
+  endpoint: GET /v3.0/workbench/alerts
+  docs: https://automation.trendmicro.com
+  verification: partial
+  needs: []
+  notes: Endpoint and nextLink paging from third-party integration docs.
+template:
+  name: trend_micro_vision_one
+  display_name: Trend Micro Vision One
+  enabled: true
+  base_url: https://${TREND_API_HOST}
+  auth:
+    type: bearer
+    token: ${trend_api_key}
+  streams:
+  - name: workbench_alerts
+    entity: event
+    endpoint: /v3.0/workbench/alerts
+    records_path: items
+    pagination:
+      type: link
+      next_path: nextLink
+      max_pages: 10
+    mapping:
+      id: id
+      type: model
+      severity: severity
+      timestamp: createdDateTime
+      description: model
+    transforms:
+      severity_map:
+        low: low
+        medium: medium
+        high: high
+        critical: critical
+  schedule_seconds: 900

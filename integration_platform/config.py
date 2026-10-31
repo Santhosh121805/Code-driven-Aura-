@@ -109,6 +109,29 @@ class _Model(BaseModel):
 
 
 # ---------------------------------------------------------------- auth
+SENSITIVE_HEADER = re.compile(r"auth|token|key|secret|password|cookie", re.I)
+
+
+def _check_headers(v: dict[str, str]) -> dict[str, str]:
+    for name, value in v.items():
+        if SENSITIVE_HEADER.search(name) and not ENV_REF.match(value.strip()):
+            raise ValueError(f"has a sensitive-looking header '{name}'; its value must be an environment variable reference like ${{MY_TOOL_KEY}}")
+    return v
+
+
+Headers = Annotated[dict[str, str], AfterValidator(_check_headers)]
+
+
+def _check_login_body(v: dict[str, Any]) -> dict[str, Any]:
+    """Secret-looking fields of a login body must be ${NAME} references, like sensitive headers."""
+    for name, value in v.items():
+        if isinstance(value, dict):
+            _check_login_body(value)
+        elif SENSITIVE_HEADER.search(name) and not (isinstance(value, str) and ENV_REF.match(value.strip())):
+            raise ValueError(f"login body field '{name}' looks secret; its value must be an environment variable reference like ${{MY_TOOL_SECRET}}")
+    return v
+
+
 class AuthNone(_Model):
     type: Literal["none"]
 
@@ -140,22 +163,37 @@ class AuthOAuth2(_Model):
     client_secret: SecretRef
 
 
-Auth = Annotated[Union[AuthNone, AuthBearer, AuthApiKey, AuthBasic, AuthOAuth2], Field(discriminator="type")]
-AUTH_TYPES = ("none", "bearer", "api_key", "basic", "oauth2_client_credentials")
+class AuthSessionLogin(_Model):
+    """Log in once, then send the returned token on every request; re-login on expiry or a 401.
+    Covers APIs such as Prisma Cloud (/login -> x-redlock-auth), Lacework (/api/v2/access/tokens), Forcepoint DLP
+    (refresh-token), Check Point (/web_api/login -> X-chkp-sid) and Cisco FMC (token in a response header)."""
+    type: Literal["session_login"]
+    login_url: str = Field(description="Full URL, or a path relative to base_url")
+    method: Literal["POST", "GET"] = "POST"
+    username: str | None = Field(default=None, description="With password: sent as HTTP Basic on the login call only")
+    password: SecretRef | None = None
+    headers: Headers = Field(default_factory=dict, description="Headers for the login call only, e.g. X-LW-UAKS: ${lw_secret}")
+    body: Annotated[dict[str, Any], AfterValidator(_check_login_body)] = Field(
+        default_factory=dict, description="JSON body of the login call; strings may reference ${NAME}")
+    token_path: JmesPath | None = Field(default="token", description="Where the token is in the JSON response")
+    token_response_header: str | None = Field(default=None, description="Take the token from this response header instead")
+    header: str = Field(default="Authorization", min_length=1, description="Header that carries the token on later requests")
+    prefix: str = Field(default="Bearer ", description='Text before the token, e.g. "Bearer " (empty for x-redlock-auth)')
+    ttl_seconds: int = Field(default=600, ge=30, le=86400, description="Re-login after this long (shorter than the token lifetime)")
+
+    @model_validator(mode="after")
+    def _token_source(self) -> "AuthSessionLogin":
+        if not self.token_path and not self.token_response_header:
+            raise ValueError("set token_path (JSON response) or token_response_header (response header)")
+        if (self.username is None) != (self.password is None):
+            raise ValueError("username and password go together (HTTP Basic on the login call)")
+        return self
+
+
+Auth = Annotated[Union[AuthNone, AuthBearer, AuthApiKey, AuthBasic, AuthOAuth2, AuthSessionLogin], Field(discriminator="type")]
+AUTH_TYPES = ("none", "bearer", "api_key", "basic", "oauth2_client_credentials", "session_login")
 
 # ---------------------------------------------------------------- pagination
-SENSITIVE_HEADER = re.compile(r"auth|token|key|secret|password|cookie", re.I)
-
-
-def _check_headers(v: dict[str, str]) -> dict[str, str]:
-    for name, value in v.items():
-        if SENSITIVE_HEADER.search(name) and not ENV_REF.match(value.strip()):
-            raise ValueError(f"has a sensitive-looking header '{name}'; its value must be an environment variable reference like ${{MY_TOOL_KEY}}")
-    return v
-
-
-Headers = Annotated[dict[str, str], AfterValidator(_check_headers)]
-
 
 class PaginationNone(_Model):
     type: Literal["none"]

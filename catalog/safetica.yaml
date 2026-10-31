@@ -1,0 +1,14 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: Safetica
+  category: DLP
+  api_style: Push (webhook / syslog to a SIEM)
+  auth: n/a
+  paging: n/a
+  endpoint: n/a (push)
+  docs: https://support.safetica.com/en/knowledge-base/send-alerts-to-siem
+  verification: verified
+  needs:
+  - push_receiver
+  notes: Safetica sends alerts to a SIEM endpoint; there is nothing to pull.

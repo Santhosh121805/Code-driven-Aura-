@@ -1,0 +1,45 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: Sophos Intercept X
+  category: EDR
+  api_style: REST pull (Sophos Central)
+  auth: OAuth2 client credentials (id.sophos.com) + X-Tenant-ID header
+  paging: unverified (single page in the template)
+  endpoint: GET /common/v1/alerts (regional host from whoami)
+  docs: https://developer.sophos.com
+  verification: partial
+  needs: []
+  notes: Tenant ID and regional API host come from a one-off GET /whoami/v1 call; put both in .env.
+template:
+  name: sophos_intercept_x
+  display_name: Sophos Intercept X
+  enabled: true
+  base_url: https://${SOPHOS_API_HOST}
+  auth:
+    type: oauth2_client_credentials
+    token_url: https://id.sophos.com/api/v2/oauth2/token
+    client_id: ${SOPHOS_CLIENT_ID}
+    client_secret: ${SOPHOS_CLIENT_SECRET}
+  scopes:
+  - token
+  headers:
+    X-Tenant-ID: ${SOPHOS_TENANT_ID}
+  streams:
+  - name: alerts
+    entity: event
+    endpoint: /common/v1/alerts
+    records_path: items
+    mapping:
+      id: id
+      type: type
+      severity: severity
+      timestamp: raisedAt
+      description: description
+      host: managedAgent.name
+    transforms:
+      severity_map:
+        low: low
+        medium: medium
+        high: high
+  schedule_seconds: 900

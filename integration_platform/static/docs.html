@@ -50,6 +50,7 @@
         <a href="#reliability">Reliability</a>
         <a href="#security">Security</a>
         <a href="#roles">Roles &amp; permissions</a>
+        <a href="#catalog">Integration catalog</a>
         <a href="#faq">FAQ</a>
       </nav>
     </aside>
@@ -199,6 +200,7 @@ streams:
             <tr><td><code>api_key</code></td><td><code>header</code> (default <code>X-API-Key</code>), <code>api_key</code>, <code>prefix</code>, <code>optional</code></td><td>Okta: header <code>Authorization</code>, prefix <code>"SSWS "</code>. NVD: <code>optional: true</code>.</td></tr>
             <tr><td><code>basic</code></td><td><code>username</code>, <code>password</code></td><td>Jira Cloud (email + API token).</td></tr>
             <tr><td><code>oauth2_client_credentials</code></td><td><code>token_url</code>, <code>client_id</code>, <code>client_secret</code></td><td>Tokens are fetched, cached and refreshed automatically.</td></tr>
+            <tr><td><code>session_login</code></td><td><code>login_url</code>, <code>body</code>, <code>headers</code>, <code>username</code>/<code>password</code>, <code>token_path</code> or <code>token_response_header</code>, <code>header</code>, <code>prefix</code>, <code>ttl_seconds</code></td><td>Log in once and reuse the token (Lacework, Prisma Cloud, Cisco FMC, Check Point).</td></tr>
           </tbody></table></div>
         <p>Secret fields must be a reference such as <code>${OKTA_TOKEN}</code>. A pasted secret is rejected.</p>
         <pre class="code" data-copyable data-name="okta.yaml">auth: { type: api_key, header: Authorization, prefix: "SSWS ", api_key: "${okta_token}" }</pre>
@@ -345,6 +347,32 @@ transforms:
             <tr><td>Audit log</td><td>-</td><td>-</td><td>✓</td></tr>
           </tbody></table></div>
         <p>Add a user or change a role with <code>python -m integration_platform.auth set-password &lt;user&gt; &lt;role&gt;</code>. Changing someone's role ends their current session.</p>
+      </article>
+
+      <!-- ============================================================ Catalog -->
+      <article class="doc" id="catalog" hidden>
+        <h1>Integration catalog</h1>
+        <p class="lede">35 tools customers use, researched from the vendors' public API docs. Each has a status; templates are offered only when the facts behind them could be confirmed.</p>
+        <h2>Statuses</h2>
+        <div class="table-scroll"><table class="doc-table"><thead><tr><th>Status</th><th>Tools</th></tr></thead><tbody><tr><td><b>Connected</b> (0)</td><td>-</td></tr><tr><td><b>Template ready</b> (5)</td><td>Fortinet FortiGate, Lacework FortiCNAPP, Netskope DLP, Sophos Intercept X, Trend Micro Vision One</td></tr><tr><td><b>Needs verification</b> (10)</td><td>Cisco Secure Firewall, Forcepoint DLP, Juniper SRX, LogRhythm, ManageEngine Log360, OpenText ArcSight, Prisma Cloud, SonicWall, Trellix EDR, WatchGuard Firebox</td></tr><tr><td><b>Needs capability</b> (16)</td><td>AWS Security Hub / GuardDuty, Check Point, CrowdStrike Cloud Security, Digital Guardian, Elastic Security, Google Security Command Center, Kaspersky EDR, Orca Security, Palo Alto Cortex XSIAM, Safetica, Sophos Firewall, Symantec DLP, Symantec Endpoint Security, Trellix DLP, Wiz, Zscaler DLP</td></tr><tr><td><b>No public API</b> (4)</td><td>Binary Search, Gurucul, Seceon, Seqrite XDR</td></tr></tbody></table></div>
+        <p>Open the <b>Catalog</b> page in the app to search them, read the notes and doc links, and (as an admin) load a template into the wizard.</p>
+        <h2>What the engine has today</h2>
+        <div class="table-scroll"><table class="doc-table"><thead><tr><th>Area</th><th>Supported</th></tr></thead><tbody><tr><td>Auth</td><td>None, API key header (with prefix), Bearer, Basic, OAuth2 client credentials, session login (new)</td></tr><tr><td>Paging</td><td>None, page number, limit/offset, cursor (query parameter), next link (Link header or body path)</td></tr><tr><td>Request</td><td>GET / POST with a static JSON body, query params with `{{ last_sync }}` / date windows, `${NAME}` in URLs and headers</td></tr><tr><td>Mapping</td><td>JMESPath (nested paths, joins, constants), severity maps, ISO / epoch time formats, quarantine of bad records</td></tr><tr><td>Reliability</td><td>1 s / 2 s / 4 s retries, no retry on 401/403, Retry-After / reset headers, pacing, alert after 3 failures</td></tr><tr><td>Safety</td><td>Secrets by name, encrypted vault, log masking, token-abuse guard, roles and audit</td></tr></tbody></table></div>
+        <h2>Gap analysis</h2>
+        <div class="table-scroll"><table class="doc-table"><thead><tr><th>Capability</th><th>Status</th><th>Needed by</th><th>Tools</th></tr></thead><tbody><tr><td>Request-body pagination (incl. GraphQL cursors)</td><td>Missing</td><td>7</td><td>Check Point, Elastic Security, Orca Security, Palo Alto Cortex XSIAM, Symantec DLP, Symantec Endpoint Security, Wiz</td></tr><tr><td>Two-step ID lookup</td><td>Missing</td><td>2</td><td>CrowdStrike Cloud Security, Trellix DLP</td></tr><tr><td>Syslog / webhook receiver</td><td>Missing</td><td>2</td><td>Safetica, Zscaler DLP</td></tr><tr><td>AWS SigV4 request signing</td><td>Missing</td><td>1</td><td>AWS Security Hub / GuardDuty</td></tr><tr><td>Service-account JWT (Google OAuth2)</td><td>Missing</td><td>1</td><td>Google Security Command Center</td></tr><tr><td>XML request / response</td><td>Missing</td><td>1</td><td>Sophos Firewall</td></tr><tr><td>RPC-style session API</td><td>Missing</td><td>1</td><td>Kaspersky EDR</td></tr><tr><td>Export acknowledge (bookmark)</td><td>Missing</td><td>1</td><td>Digital Guardian</td></tr><tr><td>Session-login token auth</td><td>Implemented</td><td>8</td><td>Check Point, Cisco Secure Firewall, Forcepoint DLP, Kaspersky EDR, Lacework FortiCNAPP, OpenText ArcSight, Prisma Cloud, SonicWall</td></tr></tbody></table></div>
+        <p>Session login was needed by the most tools and is now built. The next most valuable capability is request-body pagination.</p>
+        <h2>Session login</h2>
+        <p>For APIs that hand out a token from a login call. Example (Lacework FortiCNAPP):</p>
+        <pre class="code" data-copyable data-name="lacework.yaml">auth:
+  type: session_login
+  login_url: /api/v2/access/tokens        # called once; the token is reused until ttl_seconds
+  headers: { X-LW-UAKS: "${lacework_secret}" }
+  body: { keyId: "${LACEWORK_KEY_ID}", expiryTime: 3600 }
+  token_path: token                       # or token_response_header: X-auth-access-token
+  header: Authorization
+  prefix: "Bearer "
+  ttl_seconds: 3300</pre>
+        <p>A 401 on a data call triggers one fresh login. The token is masked in logs like every other secret.</p>
       </article>
 
       <!-- ============================================================ FAQ -->

@@ -1,0 +1,14 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: CrowdStrike Cloud Security
+  category: Cloud security
+  api_style: REST pull
+  auth: OAuth2 client credentials
+  paging: Query IDs, then fetch entities by ID
+  endpoint: IOM queries + IOM entities (Cloud Security Detections)
+  docs: https://developer.crowdstrike.com/api-reference/collections/cloud-security-detections/
+  verification: verified
+  needs:
+  - id_lookup
+  notes: 'Two calls per batch: query IOM IDs, then fetch the IOM entities.'

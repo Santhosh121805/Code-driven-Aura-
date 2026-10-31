@@ -1,0 +1,13 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: Trellix EDR
+  category: EDR
+  api_style: REST pull
+  auth: OAuth2 client credentials (Trellix IAM, EDR scopes)
+  paging: unverified
+  endpoint: GET /ft/api/v2/ft/threats (from an older third-party guide)
+  docs: https://docs.trellix.com/docs/trellix-edr-apis
+  verification: partial
+  needs: []
+  notes: OAuth2 confirmed; Trellix's token URL differs between its own pages and the threats path may have changed.

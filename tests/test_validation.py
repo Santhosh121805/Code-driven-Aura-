@@ -34,7 +34,7 @@ def test_seeded_configs_are_valid():
 
 def test_auth_type_message():
     assert errors_for(lambda d: d["auth"].update(type="magic")) == [
-        "auth.type must be one of: none, bearer, api_key, basic, oauth2_client_credentials"]
+        "auth.type must be one of: none, bearer, api_key, basic, oauth2_client_credentials, session_login"]
 
 
 def test_pagination_type_message():

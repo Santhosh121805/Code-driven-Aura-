@@ -1,0 +1,14 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: OpenText ArcSight
+  category: SIEM
+  api_style: REST pull (ESM service layer)
+  auth: Session login (LoginService/login returns authToken)
+  paging: unverified
+  endpoint: unverified (event query service)
+  docs: https://microfocus.com/documentation/arcsight/arcsight-esm-7.8/pdfdoc/ESM_ServiceLayer_DevGuide/ESM_ServiceLayer_DevGuide.pdf
+  verification: partial
+  needs:
+  - session_login
+  notes: Login flow from the ESM Service Layer guide (session_login now supported); which service returns events was not confirmed.

@@ -371,3 +371,10 @@ details.raw .code { margin-top: 8px; }
   .yaml-panel { position: static; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* ------------------------------------------------------------------ catalog */
+.cat-title { font-size: 16px; margin: var(--s2) 0 var(--s2); display: flex; align-items: baseline; gap: 8px; }
+#catGroups { display: flex; flex-direction: column; gap: var(--s2); }
+.cat-card .int-name { white-space: normal; }
+.cat-card .int-chips .chip-sm { white-space: normal; height: auto; min-height: 22px; padding: 2px 8px; line-height: 1.4; }
+.cat-card .int-line .mono { font-size: 12px; overflow-wrap: anywhere; }

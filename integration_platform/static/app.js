@@ -42,6 +42,8 @@ const ICONS = {
   check: '<path d="m5 12 5 5 9-10"/>',
   copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>',
   alert: '<circle cx="12" cy="12" r="9"/><path d="M12 8v5m0 3h.01"/>',
+  catalog: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M17.5 14v7M14 17.5h7"/>',
+  external: '<path d="M14 4h6v6M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/>',
 };
 const svg = (name) => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ""}</svg>`;
 const icon = (name, cls = "ico") => `<span class="${cls}">${svg(name)}</span>`;
@@ -125,7 +127,7 @@ const STATUS = {
 };
 const statusOf = (h) => (h.running ? ["Running", "ok"] : STATUS[h.status] || [cap(h.status), "idle"]);
 const statusPill = (h) => { const [label, cls] = statusOf(h); return `<span class="pill ${cls}"><i></i>${esc(label)}</span>`; };
-const AUTH_LABEL = { none: "No auth", bearer: "Bearer", api_key: "API key", basic: "Basic", oauth2_client_credentials: "OAuth2" };
+const AUTH_LABEL = { none: "No auth", bearer: "Bearer", api_key: "API key", basic: "Basic", oauth2_client_credentials: "OAuth2", session_login: "Session login" };
 const PAGING_LABEL = { link: "Link header", offset: "Offset", page: "Page number", cursor: "Cursor", none: "No paging" };
 
 function emptyRow(cols, title, text = "") {
@@ -206,6 +208,7 @@ const NAV = [
   { page: "users", label: "Users", icon: "users", desc: "Accounts from your identity and work tools, in one table." },
   { page: "devices", label: "Devices", icon: "devices", desc: "Hosts and endpoints reported by your tools." },
   { page: "integrations", label: "Integrations", icon: "integrations", desc: "Connections to your security tools: health, last run and records pulled." },
+  { page: "catalog", label: "Catalog", icon: "catalog", desc: "Tools customers use: what each API needs, and whether a ready template exists." },
   { page: "wizard", label: "Add integration", icon: "plus", role: "admin", desc: "Connect a new tool with a config file, not code." },
   { page: "actions", label: "Actions & tickets", icon: "actions", desc: "Automatic follow-ups: Jira tickets for serious alerts and Slack alerts on repeated failures." },
   { page: "audit", label: "Audit log", icon: "audit", role: "admin", desc: "Who signed in and what they changed." },
@@ -263,6 +266,7 @@ async function refresh(force = false) {
     else if (page === "devices") await renderDevices();
     else if (page === "integrations") await renderIntegrations();
     else if (page === "actions") await renderActions();
+    else if (page === "catalog") await renderCatalog(force);
     else if (page === "audit" && can("admin")) await renderAudit();
     $("#liveDot").classList.remove("stale");
     $("#liveDot span").textContent = "Live";
@@ -583,6 +587,59 @@ async function integrationDrawer(name) {
     <details class="raw" open><summary>Config<button class="btn ghost sm" data-copy="${esc(d.yaml)}">${icon("copy")}Copy</button></summary><pre class="code">${esc(d.yaml)}</pre></details>`);
 }
 
+/* ------------------------------------------------------------------ catalog */
+const cat = { data: null, q: "", category: "", status: "", at: 0 };
+const CAT_STATUS = {
+  connected: ["Connected", "ok"], template_ready: ["Template ready", "role"], needs_verification: ["Needs verification", "warn"],
+  needs_capability: ["Needs capability", "idle"], no_public_api: ["No public API", "idle"],
+};
+const VERIFICATION = { verified: "Verified in vendor docs", partial: "Partly verified (some facts from third-party docs)", unverified: "Not verifiable from public docs" };
+const capTitle = (key) => ((cat.data.capabilities[key] || {}).title || key).toLowerCase();
+
+async function renderCatalog(force) {
+  if (!cat.data || (force && Date.now() - cat.at > 60e3)) { cat.data = await api("/api/catalog"); cat.at = Date.now(); }
+  const d = cat.data;
+  $("#catCategories").innerHTML = [["", "All"], ...d.categories.map((c) => [c, c])]
+    .map(([v, l]) => `<button class="chip ${cat.category === v ? "active" : ""}" data-cat="${esc(v)}" aria-pressed="${cat.category === v}">${esc(l)}</button>`).join("");
+  $("#catStatuses").innerHTML = [["", "All", d.entries.length], ...Object.entries(CAT_STATUS).map(([k, [l]]) => [k, l, d.counts[k] || 0])]
+    .map(([v, l, n]) => `<button class="chip ${cat.status === v ? "active" : ""}" data-status="${esc(v)}" aria-pressed="${cat.status === v}">${esc(l)} <span class="n">${n}</span></button>`).join("");
+  const q = cat.q.toLowerCase();
+  const shown = d.entries.filter((e) => (!cat.category || e.catalog.category === cat.category) && (!cat.status || e.status === cat.status)
+    && (!q || [e.catalog.name, e.catalog.category, e.catalog.auth, e.catalog.paging, e.catalog.api_style, e.label, e.catalog.notes, e.catalog.docs].join(" ").toLowerCase().includes(q)));
+  const groups = d.categories.map((c) => [c, shown.filter((e) => e.catalog.category === c)]).filter(([, list]) => list.length);
+  $("#catGroups").innerHTML = groups.map(([c, list]) => `<h2 class="cat-title">${esc(c)} <span class="muted sm">${list.length}</span></h2>
+    <div class="int-grid">${list.map(catalogCard).join("")}</div>`).join("")
+    || '<div class="card"><div class="empty"><b>No matching tools</b>Clear the search or pick another filter.</div></div>';
+}
+
+function catalogCard(e) {
+  const m = e.catalog;
+  const [label, cls] = CAT_STATUS[e.status];
+  const text = e.status === "needs_capability" ? e.label.replace("Needs capability: ", "Needs: ") : label;
+  const pill = `<span class="pill ${cls}" title="${esc(e.label)}"><i></i>${esc(text)}</span>`;
+  const usable = e.template && ["template_ready", "connected"].includes(e.status);
+  const why = e.status === "needs_capability" ? e.label : e.status === "no_public_api" ? "No public API to connect to" : "The events endpoint is not confirmed in public docs yet";
+  const use = usable ? gatedBtn("admin", "Use template", `data-template="${esc(e.id)}"`, "btn primary sm")
+    : `<button class="btn secondary sm" disabled title="${esc(why)}">Use template</button>`;
+  return `<article class="card int-card cat-card">
+    <div class="int-head"><span class="avatar">${esc(initials(m.name).slice(0, 2))}</span><span class="int-name" title="${esc(m.name)}">${esc(m.name)}</span>${pill}</div>
+    <div class="int-chips"><span class="chip-sm" title="Auth">${esc(m.auth)}</span><span class="chip-sm" title="Paging">${esc(m.paging)}</span></div>
+    <div class="int-line"><span class="mono">${esc(m.endpoint)}</span></div>
+    <div class="muted sm">${esc(m.notes || "")}</div>
+    <div class="int-line">${esc(VERIFICATION[m.verification] || m.verification)}${e.uses.length ? ` · uses ${esc(e.uses.map(capTitle).join(", "))}` : ""}</div>
+    <div class="int-foot">${use}${m.docs ? `<a class="btn ghost sm" href="${esc(m.docs)}" target="_blank" rel="noopener noreferrer" style="margin-left:auto">${icon("external")}Docs</a>` : ""}</div>
+  </article>`;
+}
+
+function useTemplate(id) {
+  const e = cat.data.entries.find((x) => x.id === id);
+  if (!e || !e.template || !can("admin")) return;
+  Object.assign(wiz, { step: 0, maxStep: 0, draft: ensureShape(copy(e.template)), sample: "", suggestion: null, test: null, saved: null, fieldErrors: {} });
+  saveWizard();
+  location.hash = "wizard";
+  toast(`${e.catalog.name} template loaded: fill in the .env names, then test it`, "ok");
+}
+
 /* ------------------------------------------------------------------ actions & tickets */
 const acts = { all: false };
 function ruleSummary(a) {
@@ -644,6 +701,7 @@ const AUTH_DEFAULTS = {
   api_key: { type: "api_key", header: "X-API-Key", api_key: "" },
   basic: { type: "basic", username: "", password: "" },
   oauth2_client_credentials: { type: "oauth2_client_credentials", token_url: "/oauth2/v1/token", client_id: "", client_secret: "" },
+  session_login: { type: "session_login", login_url: "/login", body: {}, headers: {}, token_path: "token", header: "Authorization", prefix: "Bearer ", ttl_seconds: 600 },
 };
 const PAGINATION_DEFAULTS = {
   none: { type: "none" },
@@ -838,9 +896,14 @@ function stepAuth() {
     basic: row2(input("auth.username", "Username", { placeholder: "${MY_TOOL_USER}", hint: "Plain value or ${VAR}" }), input("auth.password", "Password", { secret: true, placeholder: "${MY_TOOL_PASSWORD}" })),
     oauth2_client_credentials: input("auth.token_url", "Token URL", { placeholder: "/oauth2/v1/token", hint: "Full URL or a path on the base URL" })
       + row2(input("auth.client_id", "Client ID", { placeholder: "${OKTA_CLIENT_ID}" }), input("auth.client_secret", "Client secret", { secret: true, placeholder: "${OKTA_CLIENT_SECRET}" })),
+    session_login: input("auth.login_url", "Login URL", { placeholder: "/api/v2/access/tokens", hint: "Called once; the token it returns is reused until it expires" })
+      + row2(input("auth.token_path", "Token path in the response", { placeholder: "token", hint: "JMESPath in the JSON response" }),
+        input("auth.token_response_header", "Or: token response header", { placeholder: "X-auth-access-token", hint: "When the token comes back in a header" }))
+      + row2(input("auth.header", "Send the token in header", { placeholder: "Authorization" }), input("auth.prefix", "Prefix", { placeholder: "Bearer " }))
+      + `<div class="notice">Login body, login headers and Basic credentials: edit them in the YAML panel (secrets as <code>\${NAME}</code>).</div>`,
   }[t] || "";
   return `<h2>Authentication</h2><p class="lead">Secrets never go in the config. Reference a value from <code>.env</code> by name, e.g. <code>\${OKTA_TOKEN}</code>.</p>
-    ${select("auth.type", "Auth type", [["none", "None (public)"], ["bearer", "Bearer token"], ["api_key", "API key header"], ["basic", "Basic auth"], ["oauth2_client_credentials", "OAuth2 client credentials"]], { switchKind: "auth" })}
+    ${select("auth.type", "Auth type", [["none", "None (public)"], ["bearer", "Bearer token"], ["api_key", "API key header"], ["basic", "Basic auth"], ["oauth2_client_credentials", "OAuth2 client credentials"], ["session_login", "Session login (token from a login call)"]], { switchKind: "auth" })}
     ${fields}
     ${input("scopes", "Scopes (comma-separated)", { type: "list", placeholder: "okta.logs.read", hint: "Permissions this credential holds. Prefer read-only scopes." })}
     <div id="scopeBadge">${scopeBadge()}</div>`;
@@ -1425,6 +1488,12 @@ function boot() {
     const card = e.target.closest("[data-int]");
     if (card && e.target === card && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); integrationDrawer(card.dataset.int); }
   });
+
+  // catalog
+  $("#catSearch").addEventListener("input", debounce((e) => { cat.q = e.target.value.trim(); renderCatalog(false); }, 200));
+  $("#catCategories").addEventListener("click", (e) => { const b = e.target.closest("[data-cat]"); if (b) { cat.category = b.dataset.cat; renderCatalog(false); } });
+  $("#catStatuses").addEventListener("click", (e) => { const b = e.target.closest("[data-status]"); if (b) { cat.status = b.dataset.status; renderCatalog(false); } });
+  $("#catGroups").addEventListener("click", (e) => { const b = e.target.closest("[data-template]"); if (b && !b.disabled) useTemplate(b.dataset.template); });
 
   // actions
   $("#actionCards").addEventListener("click", (e) => {

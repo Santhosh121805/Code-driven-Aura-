@@ -1,0 +1,14 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: Orca Security
+  category: Cloud security
+  api_style: REST pull (serving-layer query)
+  auth: 'API token (Authorization: Token)'
+  paging: In the request body (1000 per page)
+  endpoint: POST /api/serving-layer/query
+  docs: https://docs.praetorian.com/articles/4095117-orca-security
+  verification: partial
+  needs:
+  - body_pagination
+  notes: Third-party integration docs; region-specific base URLs.

@@ -1,0 +1,14 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: Prisma Cloud
+  category: Cloud security
+  api_style: REST pull
+  auth: Session login (/login with access key, token in x-redlock-auth)
+  paging: pageToken
+  endpoint: unverified (alerts list path)
+  docs: https://pan.dev/prisma-cloud/api/cspm/prisma-cloud-login-api-overview/
+  verification: verified
+  needs:
+  - session_login
+  notes: Login verified (session_login, header x-redlock-auth, 10-minute token); the exact alerts list path was not confirmed.

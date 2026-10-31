@@ -1,0 +1,14 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: Symantec Endpoint Security
+  category: EDR
+  api_style: REST pull (ICDM event search)
+  auth: OAuth2 client credentials
+  paging: In the request body (cursor)
+  endpoint: unverified (event search request shape)
+  docs: https://apidocs.securitycloud.symantec.com
+  verification: partial
+  needs:
+  - body_pagination
+  notes: OAuth2 client credentials confirmed by third parties; the event search is a POST with paging in the body.

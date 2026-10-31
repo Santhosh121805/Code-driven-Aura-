@@ -1,0 +1,15 @@
+# Catalog TEMPLATE (not an active integration). 'Use template' in the app copies it into the wizard.
+# Facts come from the vendor docs linked below; 'verification' says how far they were confirmed.
+catalog:
+  name: Check Point
+  category: Firewall
+  api_style: REST pull (Management API)
+  auth: Session login (/web_api/login returns sid, sent as X-chkp-sid)
+  paging: In the request body (show-logs query id)
+  endpoint: POST /web_api/show-logs
+  docs: https://community.checkpoint.com/t5/API-CLI-Discussion/API-Testing/m-p/160040
+  verification: partial
+  needs:
+  - session_login
+  - body_pagination
+  notes: session_login now covers the sid; show-logs pages through a query id in the body.
