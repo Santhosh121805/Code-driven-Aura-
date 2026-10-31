@@ -1,14 +1,28 @@
 # B-4: repeated-failure alert to Slack via an incoming webhook (the URL is a secret: referenced by name only).
 # Leave SLACK_WEBHOOK_URL empty and the alert still shows as a UI banner and a log line.
+# One message per failure streak (dedupe_key), one when it recovers; connector_test = the "Send a test message" button.
 name: slack_failure_alert
 display_name: "Slack: connector failed repeatedly / recovered"
 enabled: true
-trigger: [connector_failure, connector_recovered]
+trigger: [connector_failure, connector_recovered, connector_test]
 request:
   base_url: "${SLACK_WEBHOOK_URL}"
   endpoint: ""
   method: POST
   auth: { type: none }
 body_template: |
-  {"text": "{% if trigger == 'connector_failure' %}:rotating_light: *{{ display_name }}* failed {{ streak }} runs in a row.\nLast error: {{ error }}{% else %}:white_check_mark: *{{ display_name }}* recovered after {{ streak }} failed run(s).{% endif %}"}
+  {% if trigger == 'connector_failure' %}{% set title = '⚠️ Connector failing: ' ~ display_name %}{% set status = 'Failing: ' ~ streak ~ ' runs in a row' %}
+  {% elif trigger == 'connector_recovered' %}{% set title = '✅ Connector recovered: ' ~ display_name %}{% set status = 'Healthy again after ' ~ streak ~ ' failed run(s)' %}
+  {% else %}{% set title = '✅ PlugSec: Slack alerts connected' %}{% set status = 'Test message' %}{% endif %}
+  {"text": "{{ title }}",
+   "blocks": [
+    {"type": "header", "text": {"type": "plain_text", "text": "{{ title }}", "emoji": true}},
+    {"type": "section", "fields": [
+      {"type": "mrkdwn", "text": "*Connector*\n{{ display_name }}"},
+      {"type": "mrkdwn", "text": "*Status*\n{{ status }}"},
+      {"type": "mrkdwn", "text": "*Time*\n{{ time }}"}]},
+    {% if trigger == 'connector_failure' %}{"type": "section", "text": {"type": "mrkdwn", "text": "*Last error*\n{{ error }}"}},{% endif %}
+    {"type": "actions", "elements": [{"type": "button", "text": {"type": "plain_text", "text": "Open PlugSec integrations"},
+                                      "url": "{{ dashboard_url }}/app#integrations"}]}
+   ]}
 dedupe_key: "{{ source }}:{{ trigger }}:{{ streak_started }}"

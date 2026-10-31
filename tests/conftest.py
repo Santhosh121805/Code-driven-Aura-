@@ -117,7 +117,7 @@ def raw_config(name: str) -> dict:
     path = FAKE_CONFIGS / f"{name}.yaml"
     if not path.exists():
         path = ROOT / "configs" / "integrations" / f"{name}.yaml"
-    return parse_yaml(path.read_text())
+    return parse_yaml(path.read_text(encoding="utf-8"))
 
 
 def load(name: str, stream: dict | None = None, **overrides):

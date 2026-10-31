@@ -435,7 +435,7 @@ def _valid_template(v: str) -> str:
     return v
 
 
-ActionTrigger = Literal["event", "connector_failure", "connector_recovered"]
+ActionTrigger = Literal["event", "connector_failure", "connector_recovered", "connector_test"]
 
 
 class ActionConfig(_Model):
@@ -443,7 +443,7 @@ class ActionConfig(_Model):
     display_name: str | None = None
     enabled: bool = True
     trigger: list[ActionTrigger] = Field(default_factory=lambda: ["event"],
-                                         description="event = each new event; connector_failure / connector_recovered = B-4 alerts")
+                                         description="event = each new event; connector_failure / connector_recovered = B-4 alerts; connector_test = test message")
     when: ActionWhen = Field(default_factory=ActionWhen)
     request: ActionRequest
     body_template: Annotated[str, AfterValidator(_valid_template)]

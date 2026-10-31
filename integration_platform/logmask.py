@@ -40,6 +40,11 @@ class MaskingFilter(logging.Filter):
         return True
 
 
+# HTTP libraries log full request URLs (a Slack webhook URL is itself a secret): mask at the logger, whatever the handlers.
+for _name in ("httpx", "httpcore"):
+    logging.getLogger(_name).addFilter(MaskingFilter())
+
+
 def install() -> None:
     """Attach the filter to every handler of the root and server loggers (handler filters see propagated records)."""
     masking = MaskingFilter()

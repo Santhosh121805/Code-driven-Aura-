@@ -91,7 +91,13 @@ class ActionRunner:
                 headers, auth = await apply_auth(client, req.auth, req.base_url, action.retry, stats, self.sleep)
                 headers.update(req.headers)
                 resp = await send_with_retry(client, req.method, url, action.retry, stats, self.sleep, json=body, headers=headers, auth=auth)
-                data = check_response(resp, "Check the action's credentials in .env.")
+                hint = "Check the action's credentials in .env."
+                if action.response_ticket_path:
+                    data = check_response(resp, hint)
+                else:  # e.g. a Slack webhook answers plain text "ok": only the status matters
+                    if resp.status_code >= 400:
+                        check_response(resp, hint)  # raises a clear (masked) error
+                    data = None
             ticket = jmespath.search(action.response_ticket_path, data) if action.response_ticket_path else None
             ticket = str(ticket) if ticket is not None else None
             self.db.complete_dedupe(action.name, dedupe_key, ticket)

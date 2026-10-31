@@ -15,6 +15,12 @@ from integration_platform.db import Database, utcnow
 from integration_platform.logmask import mask_text
 
 log = logging.getLogger("alerts")
+ERROR_LIMIT = 400  # characters of the last error shown in a chat message
+
+
+def dashboard_url() -> str:
+    """Base URL for links in alert messages (PLATFORM_URL, else this machine's dashboard)."""
+    return (os.environ.get("PLATFORM_URL") or f"http://localhost:{os.environ.get('PLATFORM_PORT') or 8000}").rstrip("/")
 FAILED = {"error"}
 HEALTHY = {"success", "partial", "suspicious"}  # data is flowing again
 
@@ -51,21 +57,46 @@ class FailureAlerter:
 
     async def _send(self, trigger: str, cfg: IntegrationConfig, message: str, streak: int, streak_started: str,
                     error: str | None) -> dict[str, Any]:
-        channels = ["ui", "log"]
+        channels, failed = ["ui", "log"], []
+        short_error = mask_text(error or "")
+        if len(short_error) > ERROR_LIMIT:
+            short_error = short_error[:ERROR_LIMIT] + "…"
         ctx = {"source": cfg.name, "display_name": cfg.display_name, "trigger": trigger, "streak": streak,
-               "streak_started": streak_started, "error": error or "", "message": message,
-               "id": f"{trigger}-{streak_started}", "severity": "high" if trigger == "connector_failure" else "info"}
+               "streak_started": streak_started, "error": short_error, "message": message, "time": _readable(utcnow()),
+               "dashboard_url": dashboard_url(), "id": f"{trigger}-{streak_started}",
+               "severity": "high" if trigger == "connector_failure" else "info"}
         for result in await self.actions.notify(trigger, ctx):
             if result.get("status") == "success":
                 channels.append(result.get("channel", "action"))
-            elif result.get("status") == "failed":
+            elif result.get("status") == "failed":  # bounded retries already happened; the claim stops any repeat
+                failed.append(f"{result.get('channel')}: {result.get('error')}")
                 log.warning("alert channel %s failed: %s", result.get("channel"), result.get("error"))
+        if failed:
+            message = f"{message} (Alert delivery failed: {'; '.join(failed)})"
         if await asyncio.to_thread(send_email, f"[PlugSec] {message[:120]}", message):
             channels.append("email")
         kind = "failure_alert" if trigger == "connector_failure" else "recovered"
         self.db.add_notification(cfg.name, kind, message, channels)
         (log.error if kind == "failure_alert" else log.info)("ALERT %s: %s (sent to %s)", kind, message, ", ".join(channels))
-        return {"kind": kind, "message": message, "channels": channels}
+        return {"kind": kind, "message": message, "channels": channels, "failed": failed}
+
+    async def send_test(self) -> dict[str, Any]:
+        """One 'PlugSec: Slack alerts connected' message through every channel subscribed to connector_test."""
+        at = utcnow()
+        ctx = {"source": "plugsec", "display_name": "PlugSec", "trigger": "connector_test", "streak": 0, "streak_started": at,
+               "error": "", "message": "PlugSec: Slack alerts connected", "time": _readable(at), "dashboard_url": dashboard_url(),
+               "id": f"connector_test-{at}", "severity": "info"}
+        results = await self.actions.notify("connector_test", ctx)
+        sent = [r.get("channel") for r in results if r.get("status") == "success"]
+        failed = [f"{r.get('channel')}: {r.get('error')}" for r in results if r.get("status") == "failed"]
+        missing = [r.get("channel") for r in results if r.get("status") == "not_configured"]
+        for f in failed:
+            log.warning("test alert failed: %s", f)
+        return {"sent": sent, "failed": failed, "not_configured": missing}
+
+
+def _readable(iso: str) -> str:
+    return iso.replace("T", " ").replace("Z", " UTC")
 
 
 def send_email(subject: str, body: str) -> bool:

@@ -1335,6 +1335,8 @@ function demoDrawer() {
         <button class="btn danger sm" data-demo="bulk-export">Simulate a bulk export</button></div>
       <div class="demo-item"><b>Repeated failure</b><span class="muted sm">Three failed GitHub runs in a row send one alert; the next good run sends "recovered".</span>
         <button class="btn secondary sm" data-demo="repeated-failure">Fail 3 times, then recover</button></div>
+      <div class="demo-item"><b>Slack test</b><span class="muted sm">Posts "PlugSec: Slack alerts connected" to the Slack webhook in .env (SLACK_WEBHOOK_URL).</span>
+        <button class="btn secondary sm" id="slackTestBtn">Send a test message</button></div>
       <div class="demo-item"><b>Reset demo</b><span class="muted sm">Clears stored records, run history and alerts, and removes integrations added during the demo. Jira tickets are never duplicated.</span>
         <button class="btn danger sm" id="resetBtn">Reset demo</button></div>
     </div><div id="demoResult" class="notice hidden"></div>`);
@@ -1354,6 +1356,18 @@ async function runDemo(btn) {
       box.textContent = msg;
       box.className = `notice ${(r.status === "success" && !r.quarantined) || r.status === "done" ? "ok" : "warn"}`;
       await loadIntegrations();
+    } catch (e) { toast(errorList(e).join("; "), "err"); }
+  });
+}
+
+async function sendSlackTest(btn) {
+  await withBusy(btn, "Sending…", async () => {
+    try {
+      const r = await api("/api/alerts/test", { method: "POST" });
+      const box = $("#demoResult");
+      box.className = `notice ${r.sent.length ? "ok" : "warn"}`;
+      box.textContent = r.sent.length ? "Test message sent to Slack." : r.failed.length ? `Slack did not accept it: ${r.failed.join("; ")}`
+        : "Slack is not configured: set SLACK_WEBHOOK_URL in .env and restart.";
     } catch (e) { toast(errorList(e).join("; "), "err"); }
   });
 }
@@ -1449,6 +1463,8 @@ function boot() {
     const d = ev.target.closest("button[data-demo]");
     if (d) runDemo(d);
     if (ev.target.closest("#resetBtn")) resetDemo();
+    const st = ev.target.closest("#slackTestBtn");
+    if (st) sendSlackTest(st);
   });
 
   // overview + events

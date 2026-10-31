@@ -187,7 +187,7 @@ On first run, `run_all.py` creates `.env` from `.env.example`, generates `SECRET
 
 Set `DEMO_MODE=on` in `.env` to let the sign-in card pre-fill the username for the picked role and show "Demo accounts are configured in .env". Passwords are never shown, and the role always comes from the account on the server, not from the picked tab.
 
-Tests: `python -m pytest`. There are 224 tests; they are hermetic and never read your `.env` or call real APIs.
+Tests: `python -m pytest`. There are 232 tests; they are hermetic and never read your `.env` or call real APIs.
 
 ## Sign-in, roles and audit
 
@@ -244,7 +244,7 @@ Other options: `requires_env` (skip a stream unless a variable is set), `fallbac
 - **429:** the engine waits for `Retry-After` (seconds or an HTTP date). Without it, it uses the configured reset header (GitHub `x-ratelimit-reset`, Okta `x-rate-limit-reset`). Without that, exponential backoff. If the server says `Retry-After: 0` (NVD does), it waits the API's known window (`fallback_wait_seconds`) instead of hammering. Every wait is logged, e.g. "waited 5s due to Retry-After".
 - **Proactive slow-down:** when `x-ratelimit-remaining` is near zero, the next call waits for the reset; `min_interval_seconds` paces APIs that ask for it (NVD keyless: 6 s).
 - **Bad data:** a record with a missing required field, the wrong type, or an unparseable time is quarantined with its reason ("1 of N invalid"). The rest of the run is stored.
-- **Repeated failure (B-4):** after `alert_after_failures` consecutive failed runs (default 3), the platform sends ONE alert per streak to `SLACK_WEBHOOK_URL` (and email if `SMTP_*` is set), plus a "recovered" message later. The UI banner and the log are always written.
+- **Repeated failure (B-4):** after `alert_after_failures` consecutive failed runs (default 3), the platform sends ONE alert per streak to `SLACK_WEBHOOK_URL` (and email if `SMTP_*` is set), plus a "recovered" message later. The UI banner and the log are always written. Slack messages have a short title (⚠️ failing / ✅ recovered), the connector, status, last error (masked), time and a button to the Integrations page; **Demo controls → Send a test message** posts "PlugSec: Slack alerts connected". If Slack rejects or cannot be reached, the failure is logged and shown in the banner; retries are bounded (1/2/4 s on 5xx, none on 4xx) and never repeat for the same streak.
 - **Exfiltration guard:** a run that pulls more than 5x the rolling baseline auto-pauses the connection and raises a critical alert (which opens a Jira ticket). **Resume** accepts the new volume and re-learns the baseline from that point. Found with real data: GitHub's first Dependabot scan jumped from 2 to 183 records per run.
 
 ## Failure tests with real APIs (recorded outputs)
@@ -298,6 +298,6 @@ integration_platform/  config.py (models, validation, ${NAME} resolution) · eng
 configs/integrations/  github, okta, jira, nvd (real) · cisa_kev (added live)
 configs/actions/       create_jira_ticket.yaml (real Jira, project KAN) · slack_failure_alert.yaml (B-4)
 configs/examples/      cisa_kev.yaml (what the live demo creates)
-tests/                 224 tests, incl. test_access.py (roles, audit), test_public.py (public pages, sign-in) and test_git_hygiene.py
+tests/                 232 tests, incl. test_access.py (roles, audit), test_public.py (public pages, sign-in) and test_git_hygiene.py
 tests/fakes/           in-process fake tools for the tests (CloudTrail, Firewall, OAuth2 Okta, Jira) + their configs and kev.json
 ```

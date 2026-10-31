@@ -113,6 +113,7 @@ AUDIT_LABELS = {
     ("POST", "/api/secrets"): "Stored secret", ("POST", "/api/ai/suggest-mapping"): "Suggested mapping",
     ("POST", "/api/demo/network-off"): "Demo: network off", ("POST", "/api/demo/wrong-key"): "Demo: wrong key",
     ("POST", "/api/demo/repeated-failure"): "Demo: repeated failure", ("POST", "/api/demo/reset"): "Reset demo",
+    ("POST", "/api/alerts/test"): "Sent test alert",
     ("POST", "/api/demo/firewall-429"): "Demo: rate limit", ("POST", "/api/demo/retry-after"): "Demo: Retry-After",
     ("POST", "/api/demo/malformed"): "Demo: malformed record", ("POST", "/api/demo/bulk-export"): "Demo: bulk export",
 }
@@ -689,6 +690,12 @@ async def demo_malformed() -> dict[str, Any]:
 async def demo_bulk_export() -> dict[str, Any]:
     """~20x volume from the Demo source (Mock): the exfiltration guard pauses it and raises a critical alert + ticket."""
     return await _demo(demo.simulate_bulk_export, None)
+
+
+@app.post("/api/alerts/test")
+async def send_test_alert() -> dict[str, Any]:
+    """Post 'PlugSec: Slack alerts connected' through the alert channels (admin). Never returns the webhook URL."""
+    return await state.registry.alerter.send_test()
 
 
 @app.post("/api/demo/network-off")

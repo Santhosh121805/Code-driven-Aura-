@@ -27,15 +27,18 @@ async def test_one_alert_per_streak_then_recovered(db, slack):
     assert alert["kind"] == "failure_alert" and alert["channels"] == ["ui", "log", "slack_failure_alert"]
     assert "Acme Firewall (mock) failed 3 runs in a row" in alert["message"]
     assert await alerter.record(cfg, FAIL) is None  # 4th failure: same streak, no second alert
-    assert len(mock_jira._slack) == 1 and "failed 3 runs in a row" in mock_jira._slack[0]["text"]
+    assert len(mock_jira._slack) == 1 and mock_jira._slack[0]["text"] == "⚠️ Connector failing: Acme Firewall (mock)"
     recovered = await alerter.record(cfg, OK)
     assert recovered["kind"] == "recovered" and "recovered after 4 failed run(s)" in recovered["message"]
-    assert len(mock_jira._slack) == 2 and "recovered" in mock_jira._slack[1]["text"]
+    assert len(mock_jira._slack) == 2 and mock_jira._slack[1]["text"] == "✅ Connector recovered: Acme Firewall (mock)"
     assert db.get_failure_state("acme_firewall")["streak"] == 0
     assert [n["kind"] for n in db.list_notifications()] == ["recovered", "failure_alert"]
 
 
-async def test_new_streak_alerts_again_and_threshold_is_configurable(db, slack):
+async def test_new_streak_alerts_again_and_threshold_is_configurable(db, slack, monkeypatch):
+    from integration_platform import alerts
+    clock = iter(f"2026-10-31T10:0{i}:00Z" for i in range(10))  # streaks are minutes apart in real life
+    monkeypatch.setattr(alerts, "utcnow", lambda: next(clock))
     alerter = FailureAlerter(db, ActionRunner(db, transport=slack, sleep=no_sleep))
     cfg = load("acme_firewall", alert_after_failures=2)
     for _ in range(2):
@@ -43,7 +46,7 @@ async def test_new_streak_alerts_again_and_threshold_is_configurable(db, slack):
     await alerter.record(cfg, OK)
     await alerter.record(cfg, FAIL)
     second = await alerter.record(cfg, FAIL)
-    assert second["kind"] == "failure_alert" and len([m for m in mock_jira._slack if "failed" in m["text"]]) == 2
+    assert second["kind"] == "failure_alert" and len([m for m in mock_jira._slack if "failing" in m["text"]]) == 2
 
 
 async def test_without_webhook_banner_and_log_only(db, monkeypatch, caplog):
@@ -89,4 +92,4 @@ async def test_repeated_failure_demo_through_registry(db, tmp_path, monkeypatch,
     r = await demo.repeated_failure(reg)
     assert r["failed_runs"] == 3 and len(r["alerts"]) == 1 and r["alerts"][0]["kind"] == "failure_alert"
     assert r["recovery_run"] == "success" and r["recovery"]["kind"] == "recovered"
-    assert [m["text"][:30] for m in mock_jira._slack][0].startswith(":rotating_light:")
+    assert [m["text"] for m in mock_jira._slack] == ["⚠️ Connector failing: GitHub", "✅ Connector recovered: GitHub"]
