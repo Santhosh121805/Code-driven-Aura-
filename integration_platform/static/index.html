@@ -1,158 +1,168 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PlugSec</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232DD4BF'/%3E%3Cpath d='M11 9v6m10-6v6M8 15h16v3a8 8 0 0 1-16 0zm8 11v-3' stroke='%230B0F14' stroke-width='2.4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+  <script>
+    /* Apply the saved theme before first paint (no flash). */
+    try { const t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = JSON.parse(t); } catch (e) { /* storage unavailable */ }
+  </script>
   <link rel="stylesheet" href="/static/styles.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M16 2 4 7v8c0 7.5 5.1 13.6 12 15 6.9-1.4 12-7.5 12-15V7z' fill='%2322d3ee'/></svg>">
 </head>
 <body>
-<header class="topbar">
-  <div class="brand">
-    <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true"><path d="M16 2 4 7v8c0 7.5 5.1 13.6 12 15 6.9-1.4 12-7.5 12-15V7z" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="m11 16 3.5 3.5L21.5 12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    <div><div class="brand-name">PlugSec</div><div class="brand-sub">Config-driven security integrations</div></div>
+  <!-- Sign-in -->
+  <div id="loginView" class="login-view hidden">
+    <form id="loginForm" class="login-card" autocomplete="on">
+      <div class="brand-mark lg" aria-hidden="true"></div>
+      <h1>PlugSec</h1>
+      <p class="muted">Sign in to continue</p>
+      <label class="field"><span class="label">Username</span><input id="loginUser" name="username" autocomplete="username" required></label>
+      <label class="field"><span class="label">Password</span><input id="loginPass" name="password" type="password" autocomplete="current-password" required></label>
+      <div id="loginError" class="field-error" role="alert"></div>
+      <button class="btn primary block" type="submit" id="loginBtn">Sign in</button>
+    </form>
   </div>
-  <nav class="tabs" role="tablist">
-    <button class="tab active" data-tab="alerts">Events</button>
-    <button class="tab" data-tab="users">Users</button>
-    <button class="tab" data-tab="devices">Devices</button>
-    <button class="tab" data-tab="integrations">Integrations</button>
-    <button class="tab" data-tab="wizard">Add Integration</button>
-    <button class="tab" data-tab="actions">Actions &amp; Tickets</button>
-  </nav>
-  <div class="top-right">
-    <span class="live"><span class="pulse"></span>Live</span>
-    <div class="menu">
-      <button class="icon-btn" id="settingsBtn" title="Settings" aria-label="Settings">
-        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19.4 13a7.5 7.5 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.4 7.4 0 0 0-1.7-1L15 3h-4l-.4 2.9a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.5 7.5 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.4 7.4 0 0 0 1.7 1L11 21h4l.4-2.9a7.4 7.4 0 0 0 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z" transform="translate(-1 0)"/></svg>
-      </button>
-      <div class="dropdown hidden" id="settingsMenu">
-        <a href="/api/schema" target="_blank">Config JSON Schema ↗</a>
-        <a href="#" id="jiraLinkMenu" target="_blank">Jira project ↗</a>
-        <button id="demoControlsBtn">Demo controls…</button>
-        <div class="sep"></div>
-        <button id="resetBtn" class="danger-text">Reset demo…</button>
+
+  <!-- App -->
+  <div id="appView" class="app hidden">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-head">
+        <div class="brand-mark" aria-hidden="true"></div>
+        <span class="brand-name">PlugSec</span>
+        <button class="icon-btn collapse-btn" id="collapseBtn" title="Collapse sidebar" aria-label="Collapse sidebar"></button>
       </div>
-    </div>
-  </div>
-</header>
+      <nav class="nav" id="nav" aria-label="Main"></nav>
+      <div class="sidebar-foot">
+        <button class="nav-item" id="demoBtn" data-role="admin"><span class="ico" data-icon="flask"></span><span class="nav-label">Demo controls</span></button>
+        <button class="nav-item" id="themeBtn"><span class="ico" data-icon="moon"></span><span class="nav-label">Light theme</span></button>
+      </div>
+    </aside>
 
-<main>
-  <div class="banner hidden" id="failureBanner"></div>
-  <!-- ============================ ALERTS ============================ -->
-  <section id="tab-alerts" class="panel active">
-    <div class="counters">
-      <div class="counter"><div class="c-label">Events</div><div class="c-value" id="cTotal">0</div></div>
-      <div class="counter crit"><div class="c-label">Critical</div><div class="c-value" id="cCritical">0</div></div>
-      <div class="counter high"><div class="c-label">High</div><div class="c-value" id="cHigh">0</div></div>
-      <div class="counter"><div class="c-label">Tools connected</div><div class="c-value" id="cTools">0</div></div>
-      <div class="counter tick"><div class="c-label">Tickets created</div><div class="c-value" id="cTickets">0</div></div>
-    </div>
-    <div class="toolbar">
-      <label>Source <select class="src-filter" id="fSource"><option value="">All sources</option></select></label>
-      <label>Severity
-        <select id="fSeverity">
-          <option value="">All severities</option><option>critical</option><option>high</option><option>medium</option><option>low</option><option>info</option>
-        </select>
-      </label>
-      <span class="muted" id="alertsMeta"></span>
-      <span class="spacer"></span>
-      <button class="btn ghost small" id="prevPage">‹ Newer</button>
-      <button class="btn ghost small" id="nextPage">Older ›</button>
-    </div>
-    <div class="table-wrap">
-      <table class="grid" id="alertsTable">
-        <thead><tr><th>Timestamp</th><th>Source</th><th>Severity</th><th>Type</th><th>Description</th><th>Host / IP</th><th>User</th><th>Ticket</th><th>Fetched at</th></tr></thead>
-        <tbody></tbody>
-      </table>
-      <div class="empty hidden" id="alertsEmpty">No events yet. Integrations run on their schedule - events appear here automatically.</div>
-    </div>
-  </section>
-
-  <!-- ============================ USERS ============================ -->
-  <section id="tab-users" class="panel">
-    <div class="counters" id="usersCounters"></div>
-    <div class="toolbar">
-      <label>Source <select class="src-filter" id="f_users"><option value="">All sources</option></select></label>
-      <span class="muted" id="usersMeta"></span>
-    </div>
-    <div class="table-wrap">
-      <table class="grid" id="usersTable"><thead><tr><th>Name</th><th>Email</th><th>Status</th><th>Last login</th><th>Source</th><th>ID</th><th>Fetched at</th></tr></thead><tbody></tbody></table>
-      <div class="empty hidden" id="usersEmpty">No users yet. Connectors with a user stream fill this table.</div>
-    </div>
-  </section>
-
-  <!-- ============================ DEVICES ============================ -->
-  <section id="tab-devices" class="panel">
-    <div class="counters" id="devicesCounters"></div>
-    <div class="toolbar">
-      <label>Source <select class="src-filter" id="f_devices"><option value="">All sources</option></select></label>
-      <span class="muted" id="devicesMeta"></span>
-    </div>
-    <div class="table-wrap">
-      <table class="grid" id="devicesTable"><thead><tr><th>Hostname</th><th>IP</th><th>OS</th><th>Owner</th><th>Last seen</th><th>Source</th><th>ID</th><th>Fetched at</th></tr></thead><tbody></tbody></table>
-      <div class="empty hidden" id="devicesEmpty">No devices yet. Connectors with a device stream fill this table.</div>
-    </div>
-  </section>
-
-  <!-- ============================ INTEGRATIONS ============================ -->
-  <section id="tab-integrations" class="panel">
-    <div class="section-head">
-      <h2>Connected integrations</h2>
-      <button class="btn primary" data-goto="wizard">+ Add integration</button>
-    </div>
-    <div class="cards" id="integrationCards"></div>
-    <div class="load-errors hidden" id="loadErrors"></div>
-  </section>
-
-  <!-- ============================ WIZARD ============================ -->
-  <section id="tab-wizard" class="panel">
-    <div class="wizard">
-      <div class="wizard-main">
-        <ol class="stepper" id="stepper"></ol>
-        <div class="step-body" id="stepBody"></div>
-        <div class="step-errors hidden" id="stepErrors"></div>
-        <div class="step-nav">
-          <button class="btn ghost" id="wizBack">‹ Back</button>
-          <span class="spacer"></span>
-          <button class="btn ghost small" id="wizNew" title="Start a new, empty integration">Start over</button>
-          <button class="btn primary" id="wizNext">Next ›</button>
+    <div class="main">
+      <header class="topbar">
+        <h1 class="page-title" id="pageTitle">Overview</h1>
+        <div class="topbar-right">
+          <span class="live" id="liveDot" title="Data refreshes every 5 seconds"><i></i><span>Live</span></span>
+          <span class="user-chip"><span class="avatar sm" id="userAvatar"></span><span id="userName"></span><span class="pill role" id="userRole"></span></span>
+          <button class="btn ghost sm" id="logoutBtn">Sign out</button>
         </div>
-      </div>
-      <aside class="yaml-panel">
-        <div class="yaml-head"><span>Live YAML</span><span class="muted small" id="yamlStatus">in sync</span></div>
-        <textarea id="yamlEditor" spellcheck="false" aria-label="YAML config"></textarea>
-        <div class="yaml-foot muted small">Edit either side: the form and YAML share one config object. Secrets are <code>${ENV_VAR}</code> references only.</div>
-      </aside>
-    </div>
-  </section>
+      </header>
 
-  <!-- ============================ ACTIONS ============================ -->
-  <section id="tab-actions" class="panel">
-    <div class="section-head">
-      <h2>Outbound actions</h2>
-      <a class="btn ghost" id="jiraLink" href="#" target="_blank">Open Jira project ↗</a>
-    </div>
-    <div class="cards" id="actionCards"></div>
-    <h3 class="sub">Recent action results</h3>
-    <div class="table-wrap">
-      <table class="grid" id="resultsTable">
-        <thead><tr><th>Time</th><th>Action</th><th>Event</th><th>Status</th><th>Ticket</th><th>Attempts</th><th>Error</th></tr></thead>
-        <tbody></tbody>
-      </table>
-      <div class="empty hidden" id="resultsEmpty">No actions fired yet. High and critical alerts create tickets automatically.</div>
-    </div>
-  </section>
-</main>
+      <main class="content" id="content">
+        <div id="failureBanner" class="banner hidden" role="status"></div>
+        <p class="page-desc" id="pageDesc"></p>
 
-<div class="modal hidden" id="modal" role="dialog" aria-modal="true">
-  <div class="modal-box">
-    <div class="modal-head"><h3 id="modalTitle"></h3><button class="icon-btn" id="modalClose" aria-label="Close">✕</button></div>
-    <div class="modal-body" id="modalBody"></div>
+        <!-- Overview -->
+        <section class="page" id="page-overview">
+          <div class="kpis" id="kpis"></div>
+          <div class="grid-2">
+            <div class="card"><div class="card-head"><h2>Events by severity</h2><span class="muted sm">Last 24 hours</span></div><div id="sevBars"></div></div>
+            <div class="card"><div class="card-head"><h2>Connections</h2><a class="link sm" href="#integrations">View all</a></div><div id="connList" class="conn-list"></div></div>
+          </div>
+          <div class="card flush">
+            <div class="card-head pad"><h2>Recent critical events</h2><a class="link sm" href="#events" data-preset="critical">View all</a></div>
+            <div class="table-wrap"><table class="table" id="criticalTable"><thead><tr><th class="w-time">Time</th><th class="w-sev">Severity</th><th>Description</th><th class="w-src">Source</th><th class="w-host">Host / IP</th></tr></thead><tbody></tbody></table></div>
+          </div>
+        </section>
+
+        <!-- Events -->
+        <section class="page" id="page-events">
+          <div class="filters">
+            <div class="search"><span class="ico" data-icon="search"></span><input id="evSearch" type="search" placeholder="e.g. CVE-2026, Pillow, 10.0.0.5" aria-label="Search events"></div>
+            <select id="evSource" class="src-filter" aria-label="Source"></select>
+            <div class="chips" id="evSeverity" role="group" aria-label="Severity"></div>
+            <div class="segmented" id="evRange" role="group" aria-label="Time range"></div>
+          </div>
+          <div class="card flush">
+            <div class="table-wrap sticky"><table class="table clickable" id="eventsTable"><thead><tr><th class="w-time">Time</th><th class="w-sev">Severity</th><th>Description</th><th class="w-src">Source</th><th class="w-host">Host / IP</th><th class="w-ticket">Ticket</th></tr></thead><tbody></tbody></table></div>
+            <div class="table-foot"><span class="muted sm" id="evMeta"></span><div class="pager"><button class="btn secondary sm" id="evPrev">Previous</button><button class="btn secondary sm" id="evNext">Next</button></div></div>
+          </div>
+        </section>
+
+        <!-- Users -->
+        <section class="page" id="page-users">
+          <div class="filters">
+            <div class="search"><span class="ico" data-icon="search"></span><input id="usSearch" type="search" placeholder="e.g. alice, @demo-mitigata.com" aria-label="Search users"></div>
+            <div class="chips" id="usSources" role="group" aria-label="Source"></div>
+          </div>
+          <div class="card flush">
+            <div class="table-wrap sticky"><table class="table clickable" id="usersTable"><thead><tr><th>Name</th><th>Email</th><th class="w-status">Status</th><th class="w-time">Last login</th><th class="w-src">Source</th></tr></thead><tbody></tbody></table></div>
+            <div class="table-foot"><span class="muted sm" id="usMeta"></span><div class="pager"><button class="btn secondary sm" id="usPrev">Previous</button><button class="btn secondary sm" id="usNext">Next</button></div></div>
+          </div>
+        </section>
+
+        <!-- Devices -->
+        <section class="page" id="page-devices">
+          <div class="filters">
+            <div class="search"><span class="ico" data-icon="search"></span><input id="dvSearch" type="search" placeholder="e.g. web-01, 10.0.4.23" aria-label="Search devices"></div>
+            <select id="dvSource" class="src-filter" aria-label="Source"></select>
+          </div>
+          <div class="card flush">
+            <div class="table-wrap sticky"><table class="table clickable" id="devicesTable"><thead><tr><th>Hostname</th><th class="w-ip">IP</th><th>OS</th><th>Owner</th><th class="w-time">Last seen</th><th class="w-src">Source</th></tr></thead><tbody></tbody></table></div>
+            <div class="table-foot"><span class="muted sm" id="dvMeta"></span><div class="pager"><button class="btn secondary sm" id="dvPrev">Previous</button><button class="btn secondary sm" id="dvNext">Next</button></div></div>
+          </div>
+        </section>
+
+        <!-- Integrations -->
+        <section class="page" id="page-integrations">
+          <div class="page-bar"><span id="intSummary" class="muted"></span><a class="btn primary" href="#wizard" data-role="admin" id="addIntBtn"><span class="ico" data-icon="plus"></span>Add integration</a></div>
+          <div id="loadErrors"></div>
+          <div class="int-grid" id="intGrid"></div>
+        </section>
+
+        <!-- Add integration (wizard) -->
+        <section class="page" id="page-wizard">
+          <ol class="stepper" id="stepper"></ol>
+          <div class="wiz-layout" id="wizLayout">
+            <div class="wiz-main">
+              <div id="stepBody" class="wiz-form"></div>
+              <div id="stepErrors" class="form-alert hidden" role="alert"></div>
+            </div>
+            <aside class="yaml-panel" id="yamlPanel">
+              <div class="yaml-head"><button class="link sm" id="yamlToggle" aria-expanded="true">Hide YAML</button><span class="sync" id="yamlStatus">in sync</span></div>
+              <textarea id="yamlEditor" class="mono" spellcheck="false" aria-label="Live YAML"></textarea>
+              <p class="muted xs">Edit either side; both stay in sync. Secrets appear only as <code>${NAME}</code>.</p>
+            </aside>
+          </div>
+          <div class="wiz-footer">
+            <button class="btn ghost" id="wizNew">Start over</button>
+            <span class="spacer"></span>
+            <button class="btn secondary" id="wizBack">Back</button>
+            <button class="btn primary" id="wizNext">Next</button>
+          </div>
+        </section>
+
+        <!-- Actions & tickets -->
+        <section class="page" id="page-actions">
+          <div class="grid-2" id="actionCards"></div>
+          <div class="card flush">
+            <div class="card-head pad"><h2>Recent results</h2><button class="btn ghost sm" id="resultsAll">View all</button></div>
+            <div class="table-wrap"><table class="table" id="resultsTable"><thead><tr><th class="w-time">Time</th><th>Action</th><th>Event</th><th class="w-status">Status</th><th class="w-ticket">Ticket</th><th class="w-num">Attempts</th></tr></thead><tbody></tbody></table></div>
+          </div>
+        </section>
+
+        <!-- Audit log -->
+        <section class="page" id="page-audit">
+          <div class="card flush">
+            <div class="table-wrap sticky"><table class="table" id="auditTable"><thead><tr><th class="w-time">Time</th><th>User</th><th class="w-status">Role</th><th>Action</th><th>Target</th><th class="w-status">Outcome</th></tr></thead><tbody></tbody></table></div>
+          </div>
+        </section>
+      </main>
+    </div>
   </div>
-</div>
-<div class="toasts" id="toasts"></div>
-<script src="/static/app.js"></script>
+
+  <!-- Right detail drawer -->
+  <div class="scrim hidden" id="scrim"></div>
+  <aside class="drawer" id="drawer" aria-hidden="true" role="dialog" aria-labelledby="drawerTitle">
+    <div class="drawer-head"><div><div class="drawer-kicker" id="drawerKicker"></div><h2 id="drawerTitle"></h2></div><button class="icon-btn" id="drawerClose" aria-label="Close"><span class="ico" data-icon="x"></span></button></div>
+    <div class="drawer-body" id="drawerBody"></div>
+  </aside>
+
+  <!-- ⋯ menu (one shared popover) -->
+  <div class="menu hidden" id="menu" role="menu"></div>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <script src="/static/app.js"></script>
 </body>
 </html>
