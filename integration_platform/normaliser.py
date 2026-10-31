@@ -22,37 +22,73 @@ _HTML_TAG = re.compile(r"<[^>]+>")
 _SKIP_LINE = re.compile(r"^\s*(#|!\[|\[!\[|<img|<p\b|<div|</|<!--|<h\d|<a\b[^>]*>\s*<img|[-*_=]{3,}\s*$|\||>)", re.I)
 
 
-def first_paragraph(text: str, max_len: int = 200) -> str | None:
-    """First readable paragraph of a README: skips headings, badges, images, HTML, tables and code blocks;
-    strips Markdown links/emphasis and trims to max_len characters on a word boundary."""
-    paragraph: list[str] = []
+_URL = re.compile(r"https?://\S+")
+_LIST_ITEM = re.compile(r"^\s*([-*+\u2192\u2022]|\d+[.)])\s+")
+# Template text that says nothing about the project (generators and placeholders), matched case-insensitively.
+_BOILERPLATE = ("there are several ways of editing", "this project was bootstrapped with", "this template provides a minimal setup",
+                "getting started with create react app", "welcome to your", "todo: document your project", "automatically synced with your",
+                "edit this readme", "replace this with")
+
+
+def _blocks(text: str) -> list[tuple[str, bool]]:
+    """README -> readable paragraphs as (clean text, is_list). Skips front matter, headings, badges, images, HTML, tables, code."""
+    lines = text.splitlines()
+    if lines and lines[0].strip() == "---":  # YAML front matter (e.g. Hugging Face Spaces)
+        close = next((i for i, l in enumerate(lines[1:], 1) if l.strip() == "---"), None)
+        if close:
+            lines = lines[close + 1:]
+    blocks: list[tuple[str, bool]] = []
+    current: list[str] = []
+    is_list = False
     in_code = False
-    for line in text.splitlines():
+
+    def flush() -> None:
+        nonlocal current, is_list
+        if current:
+            blocks.append((" ".join(" ".join(current).split()), is_list))
+        current, is_list = [], False
+
+    for line in lines:
         if line.lstrip().startswith(("```", "~~~")):
             in_code = not in_code
-            if paragraph:
-                break
+            flush()
             continue
-        if in_code:
-            continue
-        if not line.strip():
-            if paragraph:
-                break
-            continue
-        if _SKIP_LINE.match(line):
-            if paragraph:
-                break
+        if in_code or not line.strip() or _SKIP_LINE.match(line):
+            flush()
             continue
         clean = _HTML_TAG.sub("", _MD_LINK.sub(r"\1", line))
         clean = re.sub(r"[*_`]{1,3}", "", clean).strip()
-        if clean:
-            paragraph.append(clean)
-    out = " ".join(" ".join(paragraph).split())
-    if len(out) < 3:
+        if not clean:
+            continue
+        if not current:
+            is_list = bool(_LIST_ITEM.match(clean))
+        current.append(clean)
+    flush()
+    return blocks
+
+
+def _meaningful(block: str) -> bool:
+    words = _URL.sub("", block).split()
+    if len(words) < 4 or any(b in block.lower() for b in _BOILERPLATE):
+        return False
+    if block.count("\u00b7") >= 3 and all(len(part.split()) <= 3 for part in block.split("\u00b7")):
+        return False  # a navigation row: "Overview · Architecture · Features · ..."
+    if re.match(r"^[\w\s]{1,30}:\s*\S+$", block) and _URL.search(block):
+        return False  # "URL: https://..."
+    return True
+
+
+def first_paragraph(text: str, max_len: int = 200) -> str | None:
+    """First meaningful paragraph of a README: skips headings, badges, images, HTML, tables, code blocks, front matter,
+    link-only lines, navigation rows and template boilerplate; prefers prose over bullet lists; strips Markdown
+    links/emphasis and trims to max_len characters on a word boundary. None when nothing meaningful is left."""
+    blocks = [(b, is_list) for b, is_list in _blocks(text) if _meaningful(b)]
+    chosen = next((b for b, is_list in blocks if not is_list), None) or next((b for b, _ in blocks), None)
+    if not chosen:
         return None
-    if len(out) > max_len:
-        out = out[:max_len].rsplit(" ", 1)[0].rstrip(".,;:") + "…"
-    return out
+    if len(chosen) > max_len:
+        chosen = chosen[:max_len].rsplit(" ", 1)[0].rstrip(".,;:") + "…"
+    return chosen
 
 
 class _Functions(functions.Functions):

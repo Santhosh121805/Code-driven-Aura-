@@ -62,7 +62,11 @@ streams:
     path: "/repos/{{ repo.full_name }}/dependabot/alerts"
     params: { state: open, per_page: 100, sort: updated }
     pagination: { type: link, max_pages: 5 }
-    parent_status: { field: dependabot_status, ok: enabled, by_status: { 403: disabled, 404: no access } }
+    parent_status:            # 403 means "alerts disabled" or "token has no access": the message tells them apart
+      field: dependabot_status
+      ok: enabled
+      by_reason: { "not accessible": no access, "disabled": disabled }
+      by_status: { 403: disabled, 404: no access }
     mapping:
       id: "join('#', [parent().full_name, to_string(number)])"
       type: "'dependabot_alert'"

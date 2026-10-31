@@ -558,7 +558,7 @@ class FanOut:
     """Outcome of one for_each stream: records per parent item, plus items skipped (403/404...) or failed."""
     eligible: int = 0
     results: list[tuple[int, Any, list[Any]]] = field(default_factory=list)  # (item index, parent record, records)
-    outcomes: list[tuple[Any, int | str]] = field(default_factory=list)  # (parent record, "ok" | HTTP status)
+    outcomes: list[tuple[Any, int | str, str]] = field(default_factory=list)  # (parent record, "ok" | HTTP status, reason)
     skipped: list[dict[str, Any]] = field(default_factory=list)  # {item, status, reason}
     errors: list[str] = field(default_factory=list)
 
@@ -608,19 +608,19 @@ async def fan_out(cfg: IntegrationConfig, stream: Stream, parents: list[Any], la
                 out.skipped.append({"item": label, "status": None, "reason": str(exc)})
             except HTTPStatusError as exc:
                 if exc.status in fe.skip_status:
-                    out.outcomes.append((item, exc.status))
+                    out.outcomes.append((item, exc.status, exc.short))
                     out.skipped.append({"item": label, "status": exc.status, "reason": exc.short})
                 elif isinstance(exc, AuthError) or exc.status == 429:
                     fatal.append(exc)  # the credential or the quota is the problem: every other item would fail too
                 else:
-                    out.outcomes.append((item, exc.status))
+                    out.outcomes.append((item, exc.status, exc.short))
                     out.errors.append(f"{label}: {mask_text(str(exc))}")
             except (TransientError, NotConfiguredError) as exc:
                 fatal.append(exc)
             except EngineError as exc:
                 out.errors.append(f"{label}: {mask_text(str(exc))}")
             else:
-                out.outcomes.append((item, "ok"))
+                out.outcomes.append((item, "ok", ""))
                 out.results.append((index, item, records))
 
     await asyncio.gather(*(one(i, item) for i, item in enumerate(items)))
@@ -715,7 +715,7 @@ async def run_integration(cfg: IntegrationConfig, db: Any, on_new_event: OnNewEv
                     result["quarantined"] += 1
                     continue
                 if stream.merge_into_parent:
-                    merged = db.merge_fields(parent_entity, cfg.name, parent_ids[id(parent)], {f: row[f] for f in stream.mapping})
+                    merged = db.merge_fields(parent_entity, cfg.name, parent_ids[id(parent)], {f: row[f] for f in stream.mapping}, clear=True)
                     outcome = "updated" if merged else "missing"
                 else:
                     outcome = db.store(row, stream.mapping.keys())
@@ -732,8 +732,9 @@ async def run_integration(cfg: IntegrationConfig, db: Any, on_new_event: OnNewEv
         if fan:
             if stream.parent_status:
                 ps = stream.parent_status
-                for parent, outcome in fan.outcomes:
-                    value = ps.ok if outcome == "ok" else ps.by_status.get(outcome)
+                for parent, outcome, reason in fan.outcomes:
+                    matched = next((v for text, v in ps.by_reason.items() if text.lower() in reason.lower()), None)
+                    value = ps.ok if outcome == "ok" else matched or ps.by_status.get(outcome)
                     if value:
                         db.merge_fields(parent_entity, cfg.name, parent_ids[id(parent)], {ps.field: value})
             result.update(fan.summary())

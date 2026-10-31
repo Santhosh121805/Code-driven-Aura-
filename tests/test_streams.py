@@ -51,12 +51,14 @@ def github_router(dependabot_status: int):
             return httpx.Response(200, json={"Python": 300, "HTML": 100})
         if path.endswith("/readme"):
             import base64
-            return httpx.Response(200, json={"content": base64.b64encode(b"# tools\n\nSmall CLI helpers.").decode()})
+            return httpx.Response(200, json={"content": base64.b64encode(b"# tools\n\nSmall CLI helpers for daily ops.").decode()})
         if path.endswith("/collaborators"):
             return httpx.Response(200, json=[{"id": 2, "login": "hubot", "role_name": "admin"}])
         if path.endswith("/dependabot/alerts"):
             if dependabot_status != 200:
-                return httpx.Response(dependabot_status, json={"message": "Dependabot alerts are disabled for this repository."})
+                message = {403: "Dependabot alerts are disabled for this repository.", 404: "Not Found",
+                           401: "Resource not accessible by personal access token"}[dependabot_status]
+                return httpx.Response(403 if dependabot_status == 401 else dependabot_status, json={"message": message})
             return httpx.Response(200, json=[{"number": 7, "updated_at": "2026-10-30T10:00:00Z",
                                               "security_advisory": {"severity": "high", "summary": "Prototype pollution"},
                                               "dependency": {"package": {"name": "lodash"}}}])
@@ -83,7 +85,7 @@ async def test_github_all_repositories_through_config_only(db, github_env):
     assert (demo["url"], demo["primary_language"], demo["visibility"], demo["stars"], demo["topics"]) == (
         "https://github.com/octo/demo", "Python", "private", "3", ["demo"])
     assert demo["languages"]["Python"]["percent"] == 75.0 and demo["dependabot_status"] == "enabled"
-    assert demo["summary"] is None and (tools["summary"], tools["summary_source"]) == ("Small CLI helpers.", "README")
+    assert demo["summary"] is None and (tools["summary"], tools["summary_source"]) == ("Small CLI helpers for daily ops.", "README")
     events = db.list_records("event", "github")[0]
     assert {(e["id"], e["type"], e["severity"], e["description"], e["resource"]) for e in events} == {
         ("octo/demo#7", "dependabot_alert", "high", "lodash: Prototype pollution", "octo/demo"),
@@ -91,7 +93,7 @@ async def test_github_all_repositories_through_config_only(db, github_env):
     assert db.source_counts("github")["users"] == 2
 
 
-@pytest.mark.parametrize("status,value", [(403, "disabled"), (404, "no access")])
+@pytest.mark.parametrize("status,value", [(403, "disabled"), (404, "no access"), (401, "no access")])  # 401 here = 403 "not accessible"
 async def test_github_dependabot_unavailable_is_skipped_per_repository(db, github_env, status, value):
     result = await run_integration(load("github"), db, transport=github_router(status), sleep=no_sleep)
     alerts = next(s for s in result["streams"] if s["name"] == "dependabot_alerts")

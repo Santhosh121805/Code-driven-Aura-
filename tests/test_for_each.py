@@ -247,3 +247,30 @@ async def test_endpoint_change_relearns_the_guard_baseline(db):
     big = v({**small.model_dump(mode="json", exclude_none=True), "streams": [s.model_dump(mode="json", exclude_none=True) for s in config().streams]})
     result = await run_integration(big, db, transport=httpx.MockTransport(Api()), sleep=no_sleep)
     assert result["status"] == "success" and result["suspicious"] is None  # more endpoints != stolen token
+
+
+async def test_parent_status_by_reason_wins_over_status_code(db):
+    def handler(request):
+        if request.url.path == "/user/repos":
+            return httpx.Response(200, json=REPOS[:2])
+        return httpx.Response(403, json={"message": "Resource not accessible by personal access token"})
+    data = config().model_dump(mode="json", exclude_none=True)
+    data["streams"] = [s for s in data["streams"] if s["name"] in ("repositories", "alerts")]
+    data["streams"][0]["parent_status"]["by_reason"] = {"Not Accessible": "no access"}  # case-insensitive substring
+    await run_integration(validate_integration(data), db, transport=httpx.MockTransport(handler), sleep=no_sleep)
+    assert {r["dependabot_status"] for r in db.list_records("repository", "repos")[0]} == {"no access"}
+
+
+@pytest.mark.parametrize("readme,summary", [
+    ("# App\n\n## Project info\n\n**URL**: https://lovable.dev/projects/abc\n\n## How can I edit this code?\n\nThere are several ways of editing your application.\n", None),
+    ("TODO: Document your project here\n", None),
+    ("---\ntitle: MedTriage\nemoji: x\nsdk: docker\n---\n\n# MedTriage\n\nA benchmark that triages patient messages by urgency.\n",
+     "A benchmark that triages patient messages by urgency."),
+    ("# X\n\nOverview · Architecture · Pipeline · Features\n\n- one feature item here\n\nA platform that matches donors to patients in real time.\n",
+     "A platform that matches donors to patients in real time."),
+    ("# X\n\n- Smart matching: pairs donors and patients\n- SOS alerts\n", "- Smart matching: pairs donors and patients - SOS alerts"),
+    ("# X\n\n" + "word " * 80, ("word " * 80).strip()[:200].rsplit(" ", 1)[0] + "…"),
+])
+def test_readme_summary_skips_boilerplate(readme, summary):
+    from integration_platform.normaliser import first_paragraph
+    assert first_paragraph(readme, 200) == summary

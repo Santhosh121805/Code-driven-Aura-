@@ -323,6 +323,8 @@ class ParentStatus(_Model):
     field: str
     ok: str = "ok"
     by_status: dict[int, str] = Field(default_factory=dict, description="HTTP status -> value, e.g. {403: disabled, 404: no access}")
+    by_reason: dict[str, str] = Field(default_factory=dict,
+                                      description="Checked first: text in the API's error message -> value, e.g. {not accessible: no access}")
 
 
 class Stream(_Model):

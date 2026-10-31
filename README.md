@@ -30,12 +30,15 @@ It runs against **real free-tier APIs** (GitHub, Okta, Jira Cloud, NVD, CISA KEV
 | **B-3** Test connection | `engine.dry_run_integration`, `POST /api/integrations/test` (nothing saved) | Wizard **Test** step: raw vs normalised |
 | **B-4** Alert on repeated failure | `alerts.FailureAlerter` -> action engine (`actions.ActionRunner.notify`, `configs/actions/slack_failure_alert.yaml`), optional SMTP, UI banner + log | Demo controls: **Fail 3 times, then recover** -> banner + log (+ Slack when `SLACK_WEBHOOK_URL` is set) |
 | **B-5** Web form -> config | `static/app.js` **Add integration** wizard with a live YAML panel (two-way) and inline field errors | Add Integration tab |
+| **Multiple endpoints per integration** | `IntegrationConfig.streams` (shared base URL, login, headers, retries, rate limits; per-stream path, paging, mapping, entity); wizard **Endpoints** step (add / duplicate / remove), per-endpoint **Mapping** tabs (fetch sample, AI suggest, path check via `POST /api/mapping/check`) and per-endpoint **Test** badges; `api._stream_status` | Demo step 3: a 2-endpoint integration built in the wizard; integration drawer lists every endpoint with records, last status, last error |
+| **for_each fan-out** (generic) | `config.ForEach`, `Stream.merge_into_parent` / `parent_status`, `IntegrationConfig.ordered_streams`; `engine.fan_out` (semaphore, per-item 403/404 skip with reasons, shared rate-limit hold), `engine.render_path` (sandboxed, parent fields only, URL-encoded); `normaliser` functions `parent()`, `base64_decode`, `first_paragraph`, `percent_map` | `tests/test_for_each.py`; GitHub languages / README / Dependabot per repository |
+| **All GitHub repositories** (config only) | `configs/integrations/github.yaml`: `repositories` (`/user/repos`, Link paging) + `repo_languages`, `repo_readme`, `dependabot_alerts` via `for_each`; `repository` entity + `repositories` table; `GET /api/repositories` | **Repositories** page (all roles): KPIs, filters, cards, drawer; GitHub card "N repositories · N alerts · N endpoints" |
 
 ## Real sources (Section 4): each differs in login type and paging style
 
 | Source | Login type | Paging style | Streams -> entity | Config |
 |---|---|---|---|---|
-| **GitHub REST API** | Bearer (fine-grained PAT, read-only) | Link header, page numbers (`per_page=100`) | `me`, `collaborators`, `org_members` (if `GITHUB_ORG`) -> users; `dependabot_alerts` -> events, falling back to `repo_events` if Dependabot is unavailable | `github.yaml` |
+| **GitHub REST API** | Bearer (fine-grained PAT, read-only: Metadata, Contents, Dependabot alerts) | Link header, page numbers (`per_page=100`) | `repositories` (every repo the token sees) -> repositories, with `repo_languages` and `repo_readme` merged in per repo (`for_each`); `dependabot_alerts` per repo -> events (`resource` = repo); `me`, `collaborators`, `org_members` (if `GITHUB_ORG`) -> users | `github.yaml` |
 | **Okta (Integrator Free)** | API token header `Authorization: SSWS …` | Link header with `after` cursor | `/api/v1/users` -> users; `/api/v1/logs` (incremental `since`) -> events | `okta.yaml` |
 | **Jira Cloud (free)** | Basic (email + API token) | Offset `startAt` / `maxResults` (issues: `/search/jql` token paging) | `/rest/api/3/users/search` -> users; issues -> events | `jira.yaml` |
 | **NVD CVE API 2.0** | Optional API key header `apiKey` | Offset `startIndex` / `resultsPerPage` / `totalResults` | CVEs -> events (severity from CVSS v3.1, falling back to v3.0, then v2) | `nvd.yaml` |
@@ -55,6 +58,22 @@ nvd_api_key=    (optional)
 ```
 
 Then click **Run now** on each card. High and critical incidents from Okta and GitHub open tickets in your Jira project `KAN` (`configs/actions/create_jira_ticket.yaml`); CVE feeds and Jira's own issues are never ticketed.
+
+### Real GitHub run (fine-grained token, all repositories, read-only)
+
+| Measure | Result |
+|---|---|
+| Repositories found | **141** (100 public, 41 private; 30 forks, 0 archived) |
+| Have a description | 22 |
+| README summary (no description) | 81 (`summary_source = README`); 28 repos have no README (HTTP 404, skipped); 10 READMEs were template boilerplate only, so no summary |
+| No description and no summary | 38 |
+| Have topics | 0 (GitHub returns an empty `topics` list for every one of these repos) |
+| Language breakdown | 127 repos, 45 languages |
+| Dependabot | enabled on 1 repo, disabled on 134, no access on 6 (403 "Resource not accessible by personal access token") |
+| Open alerts per severity | critical 17 · high 87 · medium 68 · low 9 (181, all in one repo) |
+| Items skipped (recorded, run still **success**) | 168: 134 × "Dependabot alerts are disabled", 6 × "not accessible", 28 × README "Not Found" |
+| API calls | about 406 per run (238 pages + 168 skipped items) of GitHub's 5,000 / hour; 3,940 left after the measured run. Schedule: hourly |
+| Jira tickets | 0: `create_jira_ticket` skips `dependabot_alert` events (`when.type_not_in`), so 181 alerts did not flood `KAN` |
 
 ## Integration catalog and gap analysis
 
@@ -148,17 +167,18 @@ Session-login was the most-needed capability (8 tools) and is now built (`auth: 
   (base_url, auth, headers, retry, rate_limit, streams[])                     │ every schedule_seconds / Run now
                                                                               ▼
   ┌──────────────────────────────────────── engine.run_integration (ONE engine) ────────────────────────────────┐
-  │ for each stream:  auth (FR-1) ─► request (FR-2) ─► paginate (FR-3) ─► send_with_retry (FR-7 1s/2s/4s,        │
+  │ for each stream (parents before for_each children; fan-out = N items, `concurrency` at a time):            │
+  │                   auth (FR-1) ─► request (FR-2) ─► paginate (FR-3) ─► send_with_retry (FR-7 1s/2s/4s,        │
   │                   ${NAME} ─► vault/env (FR-6)       page/offset/       FR-8 Retry-After / reset headers /     │
   │                                                     cursor/link        pacing / slow-down)                    │
   │                   ─► records_path ─► normalise per entity (FR-5) ─► BadRecord? ─► quarantine (FR-9) ─► store   │
   │ after the run: exfiltration guard (rolling baseline)  ·  B-4 failure streak ─► Slack / email / banner         │
   └───────────────────────────────────────────────┬──────────────────────────────────────────────────────────────┘
                                                   ▼
-       SQLite (one store, FR-11):  users | devices | events  (UNIQUE source+id, + source, fetched_at)
+       SQLite (one store, FR-11):  users | devices | events | repositories  (UNIQUE source+id, + source, fetched_at)
                                    runs · quarantine · sync_state (B-1) · secrets (Fernet ciphertext) · alerts
                                                   ▼
-       FastAPI /api/* (sign-in + roles, audit) ──►  UI: Overview · Events · Users · Devices · Integrations (FR-10)
+       FastAPI /api/* (sign-in + roles, audit) ──►  UI: Overview · Events · Users · Devices · Repositories · Integrations (FR-10)
                                                      · Add integration (B-5) · Actions & tickets · Audit log
                        ──►  actions: Jira ticket for incidents (real Jira, project KAN) · Slack on repeated failure (B-4)
 
@@ -187,7 +207,7 @@ On first run, `run_all.py` creates `.env` from `.env.example`, generates `SECRET
 
 Set `DEMO_MODE=on` in `.env` to let the sign-in card pre-fill the username for the picked role and show "Demo accounts are configured in .env". Passwords are never shown, and the role always comes from the account on the server, not from the picked tab.
 
-Tests: `python -m pytest`. There are 232 tests; they are hermetic and never read your `.env` or call real APIs.
+Tests: `python -m pytest`. There are 270 tests; they are hermetic and never read your `.env` or call real APIs.
 
 ## Sign-in, roles and audit
 
@@ -275,17 +295,24 @@ Before going on stage: `python run_all.py`, open http://localhost:8000 (the home
 1. **One common format (30 s).** **Overview**: connected tools, events and critical events in the last 24 h, events by severity. **Events**: GitHub Dependabot alerts, the Okta system log, NVD CVEs and Jira issues in one table; click a row for the normalised fields and the raw JSON. **Users**: Okta, Jira and GitHub accounts side by side.
    > "Different APIs, logins and paging. One schema, one store."
 2. **Config, not code (45 s).** **Add integration**:
-   - Basics: `CISA KEV`, `cisa_kev`, `https://www.cisa.gov`. Auth: **None**. Request: `/sites/default/files/feeds/known_exploited_vulnerabilities.json`. Pagination: **None**.
+   - Basics: `CISA KEV`, `cisa_kev`, `https://www.cisa.gov`. Auth: **None**. Endpoints: one endpoint, path `/sites/default/files/feeds/known_exploited_vulnerabilities.json`, pagination **None**.
    - Mapping: **Fetch sample from API** (1,766 records, 20 shown). The suggestion arrives with its engine badge (**AI · Sarvam** when `LLM_*` is set, otherwise **Rule-based**). Review it, then **Apply to config**.
    - **Run test** (raw vs normalised, nothing saved), then **Save and go live**. KEV events appear.
    > "That was the whole integration: a YAML file."
-3. **Reliable by default (60 s).** **Demo controls** (sidebar, admin only):
+3. **Multiple endpoints (40 s).** **Add integration** → **Start over**:
+   - Basics: `Two-endpoint demo (Mock)`, `two_endpoint_demo`, `http://127.0.0.1:8000/mock`. Auth: **None**.
+   - Endpoints: endpoint 1 `events` (Events, `/events`); **+ Add endpoint** → `devices` (Devices, `/devices`). The live YAML shows both streams.
+   - Mapping: the `events` tab → **Fetch sample** → **Apply**; the `devices` tab → same. Each mapped path gets a ✓ and an example from the sample.
+   - **Run test**: one tab per endpoint, each with a **Pass** badge, raw vs normalised. **Save and go live**; the card shows "2 endpoints" and the drawer lists each with records and last status.
+   - **Repositories**: every GitHub repo with its description or README summary, languages and Dependabot alerts, filled by the same `for_each` feature.
+   > "One login, several endpoints, each with its own mapping. GitHub's per-repository calls are config too."
+4. **Reliable by default (60 s).** **Demo controls** (sidebar, admin only):
    - **Call GitHub with a wrong key**: a real 401, "Authentication failed", no retries.
    - **Network off mid-run**: retries after 1 s, 2 s and 4 s, then the GitHub card turns red.
    - **Fail 3 times, then recover**: one alert (banner, log, Slack if configured), then "recovered".
-4. **Safe secrets (20 s).** GitHub card → **View details**: the config shows only `${github_token}`, and the secret sits in the vault with its age. `git check-ignore -v .env data/platform.db logs/platform.log` proves none of them are tracked.
-5. **Roles (15 s).** Sign in as **viewer**: everything is readable, **Run now** and the ⋯ actions are locked, and Add integration and Audit log show "Admin only". Back as admin, **Audit log** shows who did what.
-6. **Bonus (30 s).** **Actions & tickets**: high and critical incidents from Okta and GitHub open tickets in Jira `KAN` (KAN-6 came from the exfiltration guard). CVE feeds are intel, not tickets.
+5. **Safe secrets (20 s).** GitHub card → **View details**: the config shows only `${github_token}`, and the secret sits in the vault with its age. `git check-ignore -v .env data/platform.db logs/platform.log` proves none of them are tracked.
+6. **Roles (15 s).** Sign in as **viewer**: everything is readable, **Run now** and the ⋯ actions are locked, and Add integration and Audit log show "Admin only". Back as admin, **Audit log** shows who did what.
+7. **Bonus (30 s).** **Actions & tickets**: high and critical incidents from Okta and GitHub open tickets in Jira `KAN` (KAN-6 came from the exfiltration guard). CVE feeds are intel, not tickets, and Dependabot alerts live on the Repositories page instead of flooding Jira.
    > "This is how INC-05 could have been caught."
 
 ## Project layout
@@ -298,6 +325,6 @@ integration_platform/  config.py (models, validation, ${NAME} resolution) · eng
 configs/integrations/  github, okta, jira, nvd (real) · cisa_kev (added live)
 configs/actions/       create_jira_ticket.yaml (real Jira, project KAN) · slack_failure_alert.yaml (B-4)
 configs/examples/      cisa_kev.yaml (what the live demo creates)
-tests/                 232 tests, incl. test_access.py (roles, audit), test_public.py (public pages, sign-in) and test_git_hygiene.py
+tests/                 270 tests, incl. test_access.py (roles, audit), test_public.py (public pages, sign-in) and test_git_hygiene.py
 tests/fakes/           in-process fake tools for the tests (CloudTrail, Firewall, OAuth2 Okta, Jira) + their configs and kev.json
 ```

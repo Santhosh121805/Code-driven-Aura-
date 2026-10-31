@@ -442,3 +442,23 @@ details.raw .code { margin-top: 8px; }
   .filters select { min-width: 0; flex: 1 1 140px; }
   .ep-grid { grid-template-columns: 1fr; }
 }
+/* phones: the sidebar becomes the icon rail, content gets a 16px gutter */
+@media (max-width: 760px) {
+  .app, .app.collapsed { grid-template-columns: var(--sidebar-mini) minmax(0, 1fr); }
+  .app .nav-label, .app .brand-name, .app .nav-item .lock { display: none; }
+  .app .sidebar-head { flex-direction: column; height: auto; gap: 8px; }
+  .app .collapse-btn { display: none; }
+  .app .nav-item { justify-content: center; padding: 0; }
+  .content { padding: var(--s3); }
+  .kpis { grid-template-columns: 1fr; }
+  .search { max-width: none; }
+}
+@media (max-width: 760px) {
+  .topbar { padding: 0 var(--s3); gap: var(--s2); }
+  .page-title { font-size: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .topbar-right { gap: var(--s2); }
+  .live, .user-chip #userName, .user-chip #userRole { display: none; }
+}
+.alert-list { display: flex; flex-direction: column; }
+.alert-row { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 9px 0; border-top: 1px solid var(--border); font-size: 13px; }
+.alert-row:first-child { border-top: 0; }

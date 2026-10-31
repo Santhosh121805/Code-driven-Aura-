@@ -484,7 +484,7 @@ async function renderRepositories() {
   const k = d.kpis;
   $("#repoKpis").innerHTML = [
     ["Repositories", fmtN(k.repositories), `${plural(k.alerts.critical + k.alerts.high + k.alerts.medium + k.alerts.low, "open Dependabot alert")}`],
-    ["With critical alerts", fmtN(k.with_critical), `${plural(k.alerts.critical, "critical alert")} · ${plural(k.alerts.high, "high")}`, "bad"],
+    ["With critical alerts", fmtN(k.with_critical), `${plural(k.alerts.critical, "critical alert")} · ${fmtN(k.alerts.high)} high`, "bad"],
     ["Languages", fmtN(k.languages), "Across all repositories"],
     ["Last updated", k.last_updated ? relTime(k.last_updated) : "-", k.last_updated ? fullTime(k.last_updated) : "Run the GitHub connection"],
   ].map(([label, value, s, cls]) => `<div class="card kpi"><div class="label">${esc(label)}</div><div class="value ${cls && value !== "0" ? cls : ""}">${esc(value)}</div><div class="sub">${esc(s)}</div></div>`).join("");
@@ -525,7 +525,7 @@ async function repoDrawer(r) {
       `<li><i class="lang-dot" style="background:${langColour(k)}"></i><span>${esc(k)}</span><span class="muted">${v.percent}%</span></li>`).join("")}</ul>` : '<div class="muted">No language data</div>'}</div>
     <div><div class="section-title">Open Dependabot alerts ${alerts.total ? `<span class="muted">${fmtN(alerts.total)}</span>` : ""}</div>
       <div class="repo-alerts" style="margin-bottom:8px">${alertPills(r)}</div>
-      ${alerts.items.length ? `<div class="runs">${alerts.items.map((e) => `<div class="run">${sevPill(e.severity)}<span>${esc(e.description)}</span><span class="muted sm">${timeHtml(e.timestamp)}</span></div>`).join("")}</div>` : ""}</div>`);
+      ${alerts.items.length ? `<div class="alert-list">${alerts.items.map((e) => `<div class="alert-row">${sevPill(e.severity)}<span>${esc(e.description)}</span><span class="muted sm">${timeHtml(e.timestamp)}</span></div>`).join("")}</div>` : ""}</div>`);
 }
 
 /* ------------------------------------------------------------------ integrations */
@@ -1168,6 +1168,8 @@ function checkMark(field) {
   return `<span class="map-check ok" title="${esc(ex)}">✓ ${esc(ex.length > 40 ? `${ex.slice(0, 40)}…` : ex)}${r.found_in < r.of ? ` <span class="muted">(${r.found_in}/${r.of})</span>` : ""}</span>`;
 }
 
+const checkInfo = (c) => (c ? `Path check against the sample: ${c.error ? esc(c.error) : `${fmtN(c.records)} record${c.records === 1 ? "" : "s"}`}` : "");
+
 function stepMapping() {
   const e = EP();
   const s = e.suggestion;
@@ -1213,7 +1215,7 @@ function stepMapping() {
     <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn secondary" id="fetchSample">Fetch sample from API</button>${gatedBtn("admin", "Suggest mapping", 'id="suggestBtn"', "btn primary")}</div>
     ${ai}
     <h2 style="margin-top:8px">Mapping saved for ${esc(st.name)}</h2>
-    ${check ? `<div class="muted sm">Path check against the sample: ${check.error ? esc(check.error) : `${fmtN(check.records)} record${check.records === 1 ? "" : "s"}`}</div>` : ""}
+    <div class="muted sm" id="checkInfo">${checkInfo(check)}</div>
     ${row2(input(`${p}.records_path`, "Records path", { placeholder: "data.alerts", hint: "JMESPath to the list of records; empty = the response is the list" }),
       select(`${p}.transforms.time_format`, `Time format (${TIME_FIELD[entity]})`, [["iso8601", "ISO 8601"], ["epoch_s", "Epoch seconds"], ["epoch_ms", "Epoch milliseconds"]]))}
     <div class="form-row">${ENTITY_FIELDS[entity].map((f) => `<div class="field"><label class="label" for="m_${f}">${f}${required.includes(f) ? ' <span class="req" title="Required">*</span>' : ""}</label>
@@ -1501,6 +1503,7 @@ async function checkPaths() {
     wiz.ep[idx].check = r;
   } catch { wiz.ep[idx].check = null; }
   if (idx !== wiz.active || STEPS[wiz.step].id !== "mapping") return;
+  if ($("#checkInfo")) $("#checkInfo").innerHTML = checkInfo(wiz.ep[idx].check);
   for (const f of ENTITY_FIELDS[st.entity]) {
     const input = $(`#m_${f}`);
     if (!input) continue;

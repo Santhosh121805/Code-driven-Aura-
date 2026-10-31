@@ -139,7 +139,11 @@ streams:
     path: "/repos/{{ repo.full_name }}/dependabot/alerts"
     params: { state: open, per_page: 100, sort: updated }
     pagination: { type: link, max_pages: 5 }
-    parent_status: { field: dependabot_status, ok: enabled, by_status: { 403: disabled, 404: no access } }
+    parent_status:            # 403 means "alerts disabled" or "token has no access": the message tells them apart
+      field: dependabot_status
+      ok: enabled
+      by_reason: { "not accessible": no access, "disabled": disabled }
+      by_status: { 403: disabled, 404: no access }
     mapping:
       id: "join('#', [parent().full_name, to_string(number)])"
       type: "'dependabot_alert'"
@@ -415,7 +419,7 @@ streams:
         <div class="numbers reveal">
           <div class="num"><b>4</b><span>real APIs</span></div>
           <div class="num"><b>5</b><span>live connectors</span></div>
-          <div class="num"><b data-tests>232</b><span>automated tests</span></div>
+          <div class="num"><b data-tests>270</b><span>automated tests</span></div>
           <div class="num"><b>3</b><span>roles</span></div>
           <div class="num"><b>0</b><span>secrets in Git</span></div>
         </div>

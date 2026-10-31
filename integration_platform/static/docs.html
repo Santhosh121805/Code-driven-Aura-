@@ -215,12 +215,13 @@ streams:
             <tr><td><code>link</code></td><td><code>next_path</code> (empty = <code>Link</code> header)</td><td>No next link, or an empty page. Links to other hosts are refused.</td></tr>
           </tbody></table></div>
         <p>Every type except <code>none</code> also has <code>max_pages</code> (default 10).</p>
-        <h2>Streams</h2>
+        <h2>Streams (endpoints)</h2>
+        <p>One integration holds one or more <code>streams</code>. Each stream is one endpoint: it shares the integration's base URL, login, headers, retries and rate limits, and has its own path, paging, mapping and table. In the wizard, the <b>Endpoints</b> step adds, duplicates and removes them; the <b>Mapping</b> and <b>Test</b> steps have one tab per endpoint.</p>
         <div class="table-scroll"><table class="doc-table">
           <thead><tr><th>Field</th><th>Meaning</th></tr></thead>
           <tbody>
-            <tr><td><code>name</code>, <code>entity</code></td><td>Stream ID and the table it fills: <code>user</code>, <code>device</code> or <code>event</code>.</td></tr>
-            <tr><td><code>endpoint</code>, <code>method</code></td><td>Path (starts with <code>/</code>) and <code>GET</code> or <code>POST</code> (with <code>body</code>).</td></tr>
+            <tr><td><code>name</code>, <code>entity</code></td><td>Stream ID (unique in the integration) and the table it fills: <code>user</code>, <code>device</code>, <code>event</code> or <code>repository</code>.</td></tr>
+            <tr><td><code>endpoint</code> (or <code>path</code>), <code>method</code></td><td>Path (starts with <code>/</code>) and <code>GET</code> or <code>POST</code> (with <code>body</code>).</td></tr>
             <tr><td><code>params</code>, <code>headers</code></td><td>Query parameters and extra headers. <code>{{ last_sync }}</code> in a parameter fetches only new data.</td></tr>
             <tr><td><code>records_path</code></td><td>JMESPath to the list of records.</td></tr>
             <tr><td><code>mapping</code></td><td>Common field → JMESPath in one record.</td></tr>
@@ -228,7 +229,45 @@ streams:
             <tr><td><code>requires_env</code></td><td>Skip the stream unless these settings exist (e.g. <code>GITHUB_ORG</code>).</td></tr>
             <tr><td><code>fallback_for</code></td><td>Run only when the named stream was unavailable (HTTP 403/404).</td></tr>
             <tr><td><code>timeout_seconds</code></td><td>Per request, default 15.</td></tr>
+            <tr><td><code>for_each</code></td><td>Run once per record of another stream (see below).</td></tr>
+            <tr><td><code>merge_into_parent</code></td><td>With <code>for_each</code>: add the mapped fields to the parent record instead of storing new rows.</td></tr>
+            <tr><td><code>parent_status</code></td><td>With <code>for_each</code>: write each item's outcome into a parent field, e.g. <code>dependabot_status</code>.</td></tr>
           </tbody></table></div>
+        <h2>for_each: one call per parent record</h2>
+        <p>Some data needs one call per item: languages per repository, details per alert ID. <code>for_each</code> runs a stream once for every record of another stream of the same integration. It is a generic engine feature; GitHub uses it through config only.</p>
+        <pre class="code" data-copyable data-name="for_each.yaml">streams:
+  - name: repositories                  # the parent: always runs first
+    entity: repository
+    path: /user/repos
+    pagination: { type: link }
+    mapping: { id: id, full_name: full_name, description: description }
+  - name: dependabot_alerts
+    entity: event
+    for_each:
+      stream: repositories              # parent stream
+      as: repo                          # name of the parent record in templates
+      concurrency: 4                    # parallel requests (default 4, max 16)
+      where: "!archived"                # optional JMESPath filter on the parent record
+      skip_status: [403, 404]           # per-item errors that are recorded and skipped (default)
+    path: "/repos/{{ repo.full_name }}/dependabot/alerts"
+    parent_status:
+      field: dependabot_status
+      ok: enabled
+      by_reason: { "not accessible": no access }   # text in the API's error message, checked first
+      by_status: { 403: disabled, 404: no access }
+    mapping:
+      id: "join('#', [parent().full_name, to_string(number)])"
+      resource: "parent().full_name"
+      severity: security_advisory.severity
+      timestamp: updated_at</pre>
+        <ul>
+          <li><b>Order:</b> a parent stream always runs before its <code>for_each</code> streams, whatever the order in the file. Cycles are rejected when the config is saved.</li>
+          <li><b>Concurrency and limits:</b> at most <code>concurrency</code> requests at a time. Retries (1 s, 2 s, 4 s), Retry-After and the proactive rate-limit slow-down apply to every item, and a 429 pauses the parallel requests too.</li>
+          <li><b>Per-item failures:</b> a 403/404 on one item is recorded with the API's reason and skipped; the stream continues. Health shows "N items skipped" with the reasons. A 401, an exhausted rate limit or a network failure stops the stream, as for any stream.</li>
+          <li><b>Safe templates:</b> the path and params may use only <code>{{ as.field }}</code> (the parent record): no settings, no other data. Values are URL-encoded, <code>../</code> is refused, and a parent value can never expand into a <code>${SECRET}</code>. Settings (<code>${NAME}</code>) are resolved before parent values are filled in.</li>
+          <li><b>Test runs</b> use the first 3 parent records; <b>Fetch sample</b> uses the first one.</li>
+          <li><b>Guard:</b> adding or removing endpoints changes a connector's normal volume, so the exfiltration guard re-learns its baseline when the list of streams changes.</li>
+        </ul>
         <h2>Mapping and transforms</h2>
         <pre class="code" data-copyable data-name="mapping.yaml">mapping:
   id: uuid                                   # plain path
@@ -240,12 +279,19 @@ transforms:
   default_severity: info                     # when the value is missing or unknown
   time_format: iso8601                       # iso8601 | epoch_s | epoch_ms</pre>
         <p>Times are always stored as ISO 8601 in UTC. Severities are always one of <code>info</code>, <code>low</code>, <code>medium</code>, <code>high</code>, <code>critical</code>.</p>
+        <h3>Extra mapping functions</h3>
+        <div class="table-scroll"><table class="doc-table"><thead><tr><th>Function</th><th>What it does</th></tr></thead><tbody>
+          <tr><td><code>parent()</code></td><td>The parent record of a <code>for_each</code> stream, e.g. <code>parent().full_name</code>.</td></tr>
+          <tr><td><code>base64_decode(s)</code></td><td>Decodes base64 text (e.g. a README's <code>content</code>).</td></tr>
+          <tr><td><code>first_paragraph(text, `200`)</code></td><td>First meaningful paragraph of Markdown: skips headings, badges, images, HTML, code, front matter, link-only lines and template boilerplate; trims to the length on a word boundary.</td></tr>
+          <tr><td><code>percent_map(@)</code></td><td><code>{"Python": 900, "Shell": 100}</code> → bytes and percent per key, largest first.</td></tr>
+        </tbody></table></div>
       </article>
 
       <!-- ============================================================ Common schema -->
       <article class="doc" id="schema" hidden>
         <h1>Common schema</h1>
-        <p class="lede">Three tables, the same for every tool. Each row also stores <code>source</code> (the integration ID), <code>stream</code>, <code>fetched_at</code> and the untouched <code>raw</code> record. A record is unique per source and ID, so re-runs update instead of duplicating.</p>
+        <p class="lede">Four tables, the same for every tool. Each row also stores <code>source</code> (the integration ID), <code>stream</code>, <code>fetched_at</code> and the untouched <code>raw</code> record. A record is unique per source and ID, so re-runs update instead of duplicating.</p>
         <h2>Users</h2>
         <div class="table-scroll"><table class="doc-table"><thead><tr><th>Field</th><th>Meaning</th></tr></thead><tbody>
           <tr><td><code>id</code></td><td>The tool's ID for the account (required).</td></tr>
@@ -272,7 +318,23 @@ transforms:
           <tr><td><code>description</code></td><td>One readable line.</td></tr>
           <tr><td><code>host</code>, <code>src_ip</code>, <code>dst_ip</code></td><td>Where it happened.</td></tr>
           <tr><td><code>user</code></td><td>Who was involved.</td></tr>
+          <tr><td><code>resource</code></td><td>The thing it is about, e.g. the repository <code>owner/name</code> of a Dependabot alert.</td></tr>
           <tr><td><code>ticket_key</code></td><td>Jira ticket opened for it, if any.</td></tr>
+        </tbody></table></div>
+        <h2>Repositories</h2>
+        <p>Code repositories (GitHub today; any tool through config). <code>topics</code> and <code>languages</code> are stored as lists / maps. Alert counts are worked out from events whose <code>resource</code> is the repository.</p>
+        <div class="table-scroll"><table class="doc-table"><thead><tr><th>Field</th><th>Meaning</th></tr></thead><tbody>
+          <tr><td><code>id</code>, <code>full_name</code></td><td>The tool's ID and <code>owner/name</code> (both required).</td></tr>
+          <tr><td><code>url</code></td><td>Link to the repository.</td></tr>
+          <tr><td><code>description</code></td><td>The owner's description.</td></tr>
+          <tr><td><code>summary</code>, <code>summary_source</code></td><td>When there is no description: the README's first paragraph (about 200 characters), source <code>README</code>.</td></tr>
+          <tr><td><code>topics</code></td><td>List of topic tags.</td></tr>
+          <tr><td><code>primary_language</code>, <code>languages</code></td><td>Main language, and bytes + percent per language.</td></tr>
+          <tr><td><code>visibility</code>, <code>is_fork</code>, <code>is_archived</code>, <code>default_branch</code></td><td>Repository settings.</td></tr>
+          <tr><td><code>stars</code>, <code>forks</code>, <code>open_issues</code></td><td>Counts.</td></tr>
+          <tr><td><code>created_at</code>, <code>last_pushed_at</code></td><td>ISO 8601, UTC.</td></tr>
+          <tr><td><code>dependabot_status</code></td><td><code>enabled</code>, <code>disabled</code> or <code>no access</code>.</td></tr>
+          <tr><td><code>alerts_critical</code> … <code>alerts_low</code></td><td>Open Dependabot alerts per severity (worked out, not stored).</td></tr>
         </tbody></table></div>
       </article>
 

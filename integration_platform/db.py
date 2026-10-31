@@ -196,10 +196,11 @@ class Database:
             self._conn.commit()
         return "updated" if exists else "new"
 
-    def merge_fields(self, entity: str, source: str, record_id: str, values: dict[str, Any]) -> bool:
-        """Fill fields of an existing row (for_each merge_into_parent / parent_status). None values never erase data.
+    def merge_fields(self, entity: str, source: str, record_id: str, values: dict[str, Any], clear: bool = False) -> bool:
+        """Fill fields of an existing row (for_each merge_into_parent / parent_status). None values are skipped unless
+        `clear` (the merging stream owns those fields, e.g. a README that no longer has a usable summary).
         Returns False when the row does not exist."""
-        values = {k: v for k, v in values.items() if v is not None and k in ENTITY_FIELDS[entity] and k != "id"}
+        values = {k: v for k, v in values.items() if (clear or v is not None) and k in ENTITY_FIELDS[entity] and k != "id"}
         if not values:
             return self._one(f"SELECT 1 AS x FROM {TABLES[entity]} WHERE source = ? AND id = ?", (source, record_id)) is not None
         sets = ", ".join(f"{k} = ?" for k in values)
