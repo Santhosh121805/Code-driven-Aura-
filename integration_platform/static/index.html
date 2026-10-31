@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Integration Hub</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M16 2 4 7v8c0 7.5 5.1 13.6 12 15 6.9-1.4 12-7.5 12-15V7z' fill='%2322d3ee'/></svg>">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true"><path d="M16 2 4 7v8c0 7.5 5.1 13.6 12 15 6.9-1.4 12-7.5 12-15V7z" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="m11 16 3.5 3.5L21.5 12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <div><div class="brand-name">Integration Hub</div><div class="brand-sub">Config-driven security integrations</div></div>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="alerts">Events</button>
+    <button class="tab" data-tab="users">Users</button>
+    <button class="tab" data-tab="devices">Devices</button>
+    <button class="tab" data-tab="integrations">Integrations</button>
+    <button class="tab" data-tab="wizard">Add Integration</button>
+    <button class="tab" data-tab="actions">Actions &amp; Tickets</button>
+  </nav>
+  <div class="top-right">
+    <span class="live"><span class="pulse"></span>Live</span>
+    <div class="menu">
+      <button class="icon-btn" id="settingsBtn" title="Settings" aria-label="Settings">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19.4 13a7.5 7.5 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.4 7.4 0 0 0-1.7-1L15 3h-4l-.4 2.9a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.5 7.5 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.4 7.4 0 0 0 1.7 1L11 21h4l.4-2.9a7.4 7.4 0 0 0 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z" transform="translate(-1 0)"/></svg>
+      </button>
+      <div class="dropdown hidden" id="settingsMenu">
+        <a href="/api/schema" target="_blank">Config JSON Schema ↗</a>
+        <a href="#" id="jiraLinkMenu" target="_blank">Mock Jira board ↗</a>
+        <a href="http://localhost:9004/slack" target="_blank">Mock Slack inbox ↗</a>
+        <button id="demoControlsBtn">Demo controls…</button>
+        <div class="sep"></div>
+        <button id="resetBtn" class="danger-text">Reset demo…</button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="banner hidden" id="failureBanner"></div>
+  <!-- ============================ ALERTS ============================ -->
+  <section id="tab-alerts" class="panel active">
+    <div class="counters">
+      <div class="counter"><div class="c-label">Events</div><div class="c-value" id="cTotal">0</div></div>
+      <div class="counter crit"><div class="c-label">Critical</div><div class="c-value" id="cCritical">0</div></div>
+      <div class="counter high"><div class="c-label">High</div><div class="c-value" id="cHigh">0</div></div>
+      <div class="counter"><div class="c-label">Tools connected</div><div class="c-value" id="cTools">0</div></div>
+      <div class="counter tick"><div class="c-label">Tickets created</div><div class="c-value" id="cTickets">0</div></div>
+    </div>
+    <div class="toolbar">
+      <label>Source <select class="src-filter" id="fSource"><option value="">All sources</option></select></label>
+      <label>Severity
+        <select id="fSeverity">
+          <option value="">All severities</option><option>critical</option><option>high</option><option>medium</option><option>low</option><option>info</option>
+        </select>
+      </label>
+      <span class="muted" id="alertsMeta"></span>
+      <span class="spacer"></span>
+      <button class="btn ghost small" id="prevPage">‹ Newer</button>
+      <button class="btn ghost small" id="nextPage">Older ›</button>
+    </div>
+    <div class="table-wrap">
+      <table class="grid" id="alertsTable">
+        <thead><tr><th>Timestamp</th><th>Source</th><th>Severity</th><th>Type</th><th>Description</th><th>Host / IP</th><th>User</th><th>Ticket</th><th>Fetched at</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="empty hidden" id="alertsEmpty">No events yet. Integrations run on their schedule - events appear here automatically.</div>
+    </div>
+  </section>
+
+  <!-- ============================ USERS ============================ -->
+  <section id="tab-users" class="panel">
+    <div class="counters" id="usersCounters"></div>
+    <div class="toolbar">
+      <label>Source <select class="src-filter" id="f_users"><option value="">All sources</option></select></label>
+      <span class="muted" id="usersMeta"></span>
+    </div>
+    <div class="table-wrap">
+      <table class="grid" id="usersTable"><thead><tr><th>Name</th><th>Email</th><th>Status</th><th>Last login</th><th>Source</th><th>ID</th><th>Fetched at</th></tr></thead><tbody></tbody></table>
+      <div class="empty hidden" id="usersEmpty">No users yet. Connectors with a user stream fill this table.</div>
+    </div>
+  </section>
+
+  <!-- ============================ DEVICES ============================ -->
+  <section id="tab-devices" class="panel">
+    <div class="counters" id="devicesCounters"></div>
+    <div class="toolbar">
+      <label>Source <select class="src-filter" id="f_devices"><option value="">All sources</option></select></label>
+      <span class="muted" id="devicesMeta"></span>
+    </div>
+    <div class="table-wrap">
+      <table class="grid" id="devicesTable"><thead><tr><th>Hostname</th><th>IP</th><th>OS</th><th>Owner</th><th>Last seen</th><th>Source</th><th>ID</th><th>Fetched at</th></tr></thead><tbody></tbody></table>
+      <div class="empty hidden" id="devicesEmpty">No devices yet. Connectors with a device stream fill this table.</div>
+    </div>
+  </section>
+
+  <!-- ============================ INTEGRATIONS ============================ -->
+  <section id="tab-integrations" class="panel">
+    <div class="section-head">
+      <h2>Connected integrations</h2>
+      <button class="btn primary" data-goto="wizard">+ Add integration</button>
+    </div>
+    <div class="cards" id="integrationCards"></div>
+    <div class="load-errors hidden" id="loadErrors"></div>
+  </section>
+
+  <!-- ============================ WIZARD ============================ -->
+  <section id="tab-wizard" class="panel">
+    <div class="wizard">
+      <div class="wizard-main">
+        <ol class="stepper" id="stepper"></ol>
+        <div class="step-body" id="stepBody"></div>
+        <div class="step-errors hidden" id="stepErrors"></div>
+        <div class="step-nav">
+          <button class="btn ghost" id="wizBack">‹ Back</button>
+          <span class="spacer"></span>
+          <button class="btn ghost small" id="wizNew" title="Start a new, empty integration">Start over</button>
+          <button class="btn primary" id="wizNext">Next ›</button>
+        </div>
+      </div>
+      <aside class="yaml-panel">
+        <div class="yaml-head"><span>Live YAML</span><span class="muted small" id="yamlStatus">in sync</span></div>
+        <textarea id="yamlEditor" spellcheck="false" aria-label="YAML config"></textarea>
+        <div class="yaml-foot muted small">Edit either side: the form and YAML share one config object. Secrets are <code>${ENV_VAR}</code> references only.</div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ============================ ACTIONS ============================ -->
+  <section id="tab-actions" class="panel">
+    <div class="section-head">
+      <h2>Outbound actions</h2>
+      <a class="btn ghost" id="jiraLink" href="#" target="_blank">Open mock Jira board ↗</a>
+    </div>
+    <div class="cards" id="actionCards"></div>
+    <h3 class="sub">Recent action results</h3>
+    <div class="table-wrap">
+      <table class="grid" id="resultsTable">
+        <thead><tr><th>Time</th><th>Action</th><th>Event</th><th>Status</th><th>Ticket</th><th>Attempts</th><th>Error</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="empty hidden" id="resultsEmpty">No actions fired yet. High and critical alerts create tickets automatically.</div>
+    </div>
+  </section>
+</main>
+
+<div class="modal hidden" id="modal" role="dialog" aria-modal="true">
+  <div class="modal-box">
+    <div class="modal-head"><h3 id="modalTitle"></h3><button class="icon-btn" id="modalClose" aria-label="Close">✕</button></div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+<div class="toasts" id="toasts"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

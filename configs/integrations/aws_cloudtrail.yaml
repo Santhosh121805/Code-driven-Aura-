@@ -1,0 +1,45 @@
+name: aws_cloudtrail
+display_name: "AWS CloudTrail (mock)"
+enabled: true
+base_url: "http://localhost:9001"
+auth:
+  type: bearer
+  token: "${MOCK_CLOUDTRAIL_TOKEN}"
+scopes: ["cloudtrail:LookupEvents"]
+schedule_seconds: 30
+retry: { max_retries: 3, backoff: exponential, base_seconds: 1 }
+streams:
+  - name: events
+    entity: event
+    endpoint: "/events"
+    params: { StartTime: "{{ last_sync }}" }
+    pagination: { type: cursor, cursor_path: "NextToken", cursor_param: "NextToken", max_pages: 10 }
+    records_path: "Records"
+    mapping:
+      id: "eventID"
+      type: "eventName"
+      timestamp: "eventTime"
+      # CloudTrail has no severity field: build a key from eventName (+ outcome) and map it below.
+      severity: "(responseElements.ConsoleLogin == 'Failure' && 'ConsoleLogin:Failure') || (errorCode && join(':', [eventName, errorCode])) || eventName"
+      description: "join('', [eventName, ' (', eventSource, ')'])"
+      user: "userIdentity.arn"
+      src_ip: "sourceIPAddress"
+    transforms:
+      severity_map:
+        GetObject: info
+        ListBuckets: info
+        DescribeInstances: info
+        ConsoleLogin: info
+        AssumeRole: low
+        "ConsoleLogin:Failure": medium
+        "ListBuckets:AccessDenied": medium
+        AuthorizeSecurityGroupIngress: medium
+        CreateAccessKey: high
+        PutBucketPolicy: high
+        StopLogging: critical
+        DeleteTrail: critical
+      default_severity: low
+      time_format: iso8601
+# Token safety: rotate the bearer token every 90 days; pause the connector if one run pulls >5x its normal volume.
+secret_max_age_days: 90
+exfiltration_guard: { multiplier: 5, min_records: 50, baseline_runs: 10, min_baseline_runs: 3 }

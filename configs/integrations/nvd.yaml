@@ -1,0 +1,30 @@
+# REAL source: NVD CVE API 2.0. Login: optional API key header (works without one, at a lower rate limit).
+# Paging: offset via startIndex / resultsPerPage / totalResults. Incremental: lastModStartDate..lastModEndDate (max 120 days).
+name: nvd
+display_name: "NVD CVE API 2.0"
+enabled: true
+base_url: "https://services.nvd.nist.gov"
+auth: { type: api_key, header: "apiKey", api_key: "${nvd_api_key}", optional: true }
+schedule_seconds: 900
+retry: { max_retries: 3, backoff: exponential, base_seconds: 1 }
+rate_limit: { min_interval_seconds: 6 }   # NVD best practice without an API key (5 requests / 30 s)
+exfiltration_guard: { enabled: false }   # public data, no token to abuse; NVD's daily bulk updates would be false positives
+streams:
+  - name: cves
+    entity: event
+    endpoint: "/rest/json/cves/2.0"
+    params:
+      lastModStartDate: "{{ (last_sync_dt or (now_dt - days(1))).strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
+      lastModEndDate: "{{ now_dt.strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
+    pagination: { type: offset, offset_param: startIndex, limit_param: resultsPerPage, limit: 1000, total_path: totalResults, max_pages: 5 }
+    records_path: "vulnerabilities"
+    timeout_seconds: 60
+    mapping:
+      id: "cve.id"
+      type: "'vulnerability'"
+      severity: "cve.metrics.cvssMetricV31[0].cvssData.baseSeverity || cve.metrics.cvssMetricV30[0].cvssData.baseSeverity || cve.metrics.cvssMetricV2[0].baseSeverity"
+      timestamp: "cve.lastModified"
+      description: "cve.descriptions[?lang=='en'] | [0].value"
+    transforms:
+      severity_map: { LOW: low, MEDIUM: medium, HIGH: high, CRITICAL: critical }
+      default_severity: info

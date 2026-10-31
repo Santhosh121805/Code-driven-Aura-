@@ -1,0 +1,21 @@
+# What the wizard produces when CISA KEV is added live in the demo (NOT preconfigured: copy into configs/integrations/
+# or add it via the Add Integration tab). No auth, no paging. Offline: base_url http://localhost:9001, endpoint /kev
+# serves a saved copy of the same feed from the mock.
+name: cisa_kev
+display_name: "CISA KEV"
+enabled: true
+base_url: "https://www.cisa.gov"
+auth: { type: none }
+schedule_seconds: 900
+streams:
+  - name: kev
+    entity: event
+    endpoint: "/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+    records_path: "vulnerabilities"
+    timeout_seconds: 60
+    mapping:
+      id: "cveID"
+      type: "'vulnerability'"
+      timestamp: "dateAdded"
+      description: "vulnerabilityName"
+    transforms: { default_severity: high, time_format: iso8601 }

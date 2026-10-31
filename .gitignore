@@ -1,0 +1,20 @@
+# Secrets: never committed. Configs only hold ${NAME} references; values live in .env / the encrypted vault.
+.env
+.env.*
+!.env.example
+# Runtime data: SQLite DB (events + the encrypted vault) and logs
+/data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+/logs/
+*.log
+# Python / tooling
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+node_modules/

@@ -1,0 +1,36 @@
+# REAL source: Okta Integrator Free Plan. Login: API token header ("SSWS <token>"). Paging: Link header with an `after` cursor.
+name: okta
+display_name: "Okta"
+enabled: true
+base_url: "https://${OKTA_DOMAIN}"
+auth: { type: api_key, header: "Authorization", prefix: "SSWS ", api_key: "${okta_token}" }
+scopes: ["okta.users.read", "okta.logs.read"]   # create the token as a read-only admin
+schedule_seconds: 900
+rate_limit: { reset_header: "x-rate-limit-reset", remaining_header: "x-rate-limit-remaining", min_remaining: 2 }
+streams:
+  - name: users
+    entity: user
+    endpoint: "/api/v1/users"
+    params: { limit: 200 }
+    pagination: { type: link, max_pages: 20 }
+    mapping:
+      id: "id"
+      name: "join(' ', [profile.firstName || '', profile.lastName || ''])"
+      email: "profile.email"
+      status: "status"
+      last_login: "lastLogin"
+  - name: events
+    entity: event
+    endpoint: "/api/v1/logs"
+    params: { limit: 1000, since: "{{ last_sync }}" }   # incremental (B-1); first run uses Okta's default window
+    pagination: { type: link, max_pages: 5 }
+    mapping:
+      id: "uuid"
+      type: "eventType"
+      severity: "severity"
+      timestamp: "published"
+      description: "displayMessage"
+      user: "actor.alternateId"
+      src_ip: "client.ipAddress"
+    transforms:
+      severity_map: { DEBUG: info, INFO: info, WARN: medium, ERROR: high }

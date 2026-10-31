@@ -1,0 +1,41 @@
+name: acme_firewall
+display_name: "Acme Firewall (mock)"
+enabled: true
+base_url: "http://localhost:9002"
+auth:
+  type: api_key
+  header: "X-API-Key"
+  api_key: "${MOCK_FIREWALL_API_KEY}"
+scopes: ["logs:read", "devices:read"]
+schedule_seconds: 30
+retry: { max_retries: 3, backoff: exponential, base_seconds: 1 }
+streams:
+  - name: logs
+    entity: event
+    endpoint: "/logs"
+    pagination: { type: page, page_param: page, size_param: page_size, page_size: 4, total_pages_path: total_pages, max_pages: 10 }
+    records_path: "results"
+    mapping:
+      id: "id"
+      type: "'firewall_block'"
+      timestamp: "ts"
+      severity: "level"
+      description: "msg"
+      src_ip: "src"
+      dst_ip: "dst"
+    transforms:
+      severity_map: { LOW: low, MEDIUM: medium, HIGH: high, CRITICAL: critical }
+      time_format: epoch_s
+  - name: devices
+    entity: device
+    endpoint: "/devices"
+    pagination: { type: page, page_param: page, size_param: page_size, page_size: 5, total_pages_path: total_pages, max_pages: 10 }
+    records_path: "results"
+    mapping:
+      id: "mac"
+      hostname: "hostname"
+      ip: "ipv4_address"
+      os: "join(' ', [os_name, os_version])"
+      owner: "user"
+      last_seen: "last_seen"
+    transforms: { time_format: epoch_s }

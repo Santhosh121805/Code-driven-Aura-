@@ -1,0 +1,35 @@
+# REAL source: Jira Cloud (free plan). Login: Basic (email + API token). Paging: offset (startAt / maxResults).
+name: jira
+display_name: "Jira Cloud"
+enabled: true
+base_url: "https://${JIRA_DOMAIN}"
+auth: { type: basic, username: "${jira_email}", password: "${jira_token}" }
+scopes: ["read:jira-user", "read:jira-work"]
+schedule_seconds: 900
+streams:
+  - name: users
+    entity: user
+    endpoint: "/rest/api/3/users/search"
+    pagination: { type: offset, offset_param: startAt, limit_param: maxResults, limit: 50, max_pages: 20 }
+    mapping:
+      id: "accountId"
+      name: "displayName"
+      email: "emailAddress"
+      status: "active && 'active' || 'inactive'"
+  - name: issues               # the classic /search endpoint is deprecated: /search/jql pages with nextPageToken
+    entity: event
+    endpoint: "/rest/api/3/search/jql"
+    params:
+      jql: "updated >= -30d ORDER BY updated DESC"
+      fields: "summary,priority,issuetype,updated,status"
+      maxResults: 50
+    pagination: { type: cursor, cursor_path: "nextPageToken", cursor_param: "nextPageToken", max_pages: 5 }
+    records_path: "issues"
+    mapping:
+      id: "key"
+      type: "fields.issuetype.name"
+      severity: "fields.priority.name"
+      timestamp: "fields.updated"
+      description: "fields.summary"
+    transforms:
+      severity_map: { Highest: critical, High: high, Medium: medium, Low: low, Lowest: info }

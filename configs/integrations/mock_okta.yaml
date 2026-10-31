@@ -1,0 +1,36 @@
+name: mock_okta
+display_name: "Mock Okta (OAuth2)"
+enabled: true
+base_url: "http://localhost:9003"
+auth:
+  type: oauth2_client_credentials
+  token_url: "/oauth2/v1/token"
+  client_id: "${MOCK_OKTA_CLIENT_ID}"
+  client_secret: "${MOCK_OKTA_CLIENT_SECRET}"
+scopes: ["okta.users.read", "okta.logs.read"]
+schedule_seconds: 30
+streams:
+  - name: users
+    entity: user
+    endpoint: "/api/v1/users"
+    pagination: { type: link, max_pages: 10 }
+    mapping:
+      id: "id"
+      name: "join(' ', [profile.firstName || '', profile.lastName || ''])"
+      email: "profile.email"
+      status: "status"
+      last_login: "lastLogin"
+  - name: events
+    entity: event
+    endpoint: "/api/v1/logs"
+    pagination: { type: link, max_pages: 10 }
+    mapping:
+      id: "uuid"
+      type: "eventType"
+      severity: "severity"
+      timestamp: "published"
+      description: "displayMessage"
+      user: "actor.alternateId"
+      src_ip: "client.ipAddress"
+    transforms:
+      severity_map: { DEBUG: info, INFO: info, WARN: medium, ERROR: critical }

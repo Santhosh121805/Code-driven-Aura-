@@ -1,0 +1,14 @@
+# B-4: repeated-failure alert to Slack via an incoming webhook (the URL is a secret: referenced by name only).
+# Offline demo: SLACK_WEBHOOK_URL=http://localhost:9004/slack/webhook (mock Slack inbox at http://localhost:9004/slack).
+name: slack_failure_alert
+display_name: "Slack: connector failed repeatedly / recovered"
+enabled: true
+trigger: [connector_failure, connector_recovered]
+request:
+  base_url: "${SLACK_WEBHOOK_URL}"
+  endpoint: ""
+  method: POST
+  auth: { type: none }
+body_template: |
+  {"text": "{% if trigger == 'connector_failure' %}:rotating_light: *{{ display_name }}* failed {{ streak }} runs in a row.\nLast error: {{ error }}{% else %}:white_check_mark: *{{ display_name }}* recovered after {{ streak }} failed run(s).{% endif %}"}
+dedupe_key: "{{ source }}:{{ trigger }}:{{ streak_started }}"

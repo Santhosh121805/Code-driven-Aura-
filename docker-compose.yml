@@ -1,0 +1,16 @@
+# Alternative to `python run_all.py`: same processes, inside one container.
+# Integration configs keep using http://localhost:900x because platform and mocks share the container.
+services:
+  integration-hub:
+    build: .
+    ports:
+      - "8000:8000"   # dashboard + API
+      - "9001:9001"   # mock AWS CloudTrail
+      - "9002:9002"   # mock firewall
+      - "9003:9003"   # mock Okta
+      - "9004:9004"   # mock Jira board
+    env_file:
+      - .env.example
+    volumes:
+      - ./configs:/app/configs   # integrations added in the UI persist on the host
+      - ./data:/app/data         # SQLite database

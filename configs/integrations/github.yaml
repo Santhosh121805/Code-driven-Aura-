@@ -1,0 +1,53 @@
+# REAL source: GitHub REST API. Login: Bearer token (fine-grained PAT, read-only). Paging: Link header with page numbers.
+name: github
+display_name: "GitHub"
+enabled: true
+base_url: "https://api.github.com"
+auth: { type: bearer, token: "${github_token}" }
+scopes: ["metadata:read", "dependabot_alerts:read"]   # fine-grained PAT permissions (read-only)
+headers:
+  Accept: "application/vnd.github+json"
+  X-GitHub-Api-Version: "2022-11-28"
+schedule_seconds: 900
+rate_limit: { reset_header: "x-ratelimit-reset", remaining_header: "x-ratelimit-remaining", min_remaining: 1 }
+streams:
+  - name: me
+    entity: user
+    endpoint: "/user"
+    mapping: { id: "id", name: "name || login", email: "email", status: "'active'" }
+  - name: collaborators
+    entity: user
+    endpoint: "/repos/${GITHUB_OWNER}/${GITHUB_REPO}/collaborators"
+    params: { per_page: 100 }
+    pagination: { type: link, max_pages: 10 }
+    mapping: { id: "id", name: "login", email: "email", status: "role_name" }
+  - name: org_members          # only when GITHUB_ORG is set
+    entity: user
+    requires_env: ["GITHUB_ORG"]
+    endpoint: "/orgs/${GITHUB_ORG}/members"
+    params: { per_page: 100 }
+    pagination: { type: link, max_pages: 10 }
+    mapping: { id: "id", name: "login", status: "'member'" }
+  - name: dependabot_alerts
+    entity: event
+    endpoint: "/repos/${GITHUB_OWNER}/${GITHUB_REPO}/dependabot/alerts"
+    params: { per_page: 100, state: "open" }
+    pagination: { type: link, max_pages: 10 }
+    mapping:
+      id: "join('-', ['dependabot', to_string(number)])"
+      type: "'dependabot_alert'"
+      severity: "security_advisory.severity"
+      timestamp: "updated_at"
+      description: "join('', [security_advisory.summary, ' (', dependency.package.name, ')'])"
+  - name: repo_events          # used only when Dependabot alerts are not available (HTTP 403/404)
+    entity: event
+    fallback_for: dependabot_alerts
+    endpoint: "/repos/${GITHUB_OWNER}/${GITHUB_REPO}/events"
+    params: { per_page: 100 }
+    pagination: { type: link, max_pages: 3 }
+    mapping:
+      id: "id"
+      type: "type"
+      timestamp: "created_at"
+      description: "join(' ', [actor.login, type, repo.name])"
+      user: "actor.login"
