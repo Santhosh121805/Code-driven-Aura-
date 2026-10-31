@@ -1,0 +1,49 @@
+name: cisa_kev
+display_name: CISA Known Exploited Vulnerabilities
+enabled: true
+base_url: https://www.cisa.gov
+auth:
+  type: none
+scopes: []
+headers: {}
+schedule_seconds: 900
+retry:
+  max_retries: 3
+  backoff: exponential
+  base_seconds: 1.0
+  max_seconds: 30.0
+rate_limit:
+  min_remaining: 1
+  max_wait_seconds: 120.0
+  max_429_retries: 5
+  min_interval_seconds: 0.0
+  fallback_wait_seconds: 0.0
+streams:
+- name: events
+  entity: event
+  endpoint: //sites/default/files/feeds/known_exploited_vulnerabilities.json
+  method: GET
+  params: {}
+  headers: {}
+  timeout_seconds: 15.0
+  pagination:
+    type: none
+  records_path: vulnerabilities
+  mapping:
+    id: cveID
+    type: '''vulnerability'''
+    timestamp: dateAdded
+    description: vulnerabilityName
+  transforms:
+    severity_map: {}
+    time_format: iso8601
+    default_severity: high
+  requires_env: []
+secret_max_age_days: 90
+alert_after_failures: 3
+exfiltration_guard:
+  enabled: true
+  multiplier: 5.0
+  min_records: 50
+  baseline_runs: 10
+  min_baseline_runs: 3
