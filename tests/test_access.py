@@ -41,13 +41,16 @@ def test_sign_in_sets_an_httponly_cookie_and_me_returns_the_role(db):
     assert c.get("/api/auth/me").status_code == 401
 
 
-def test_wrong_password_is_rejected_audited_and_throttled(db):
+def test_wrong_password_is_rejected_audited_and_cooled_down(db):
     c = TestClient(api.app)
     for _ in range(auth.MAX_FAILURES):
-        assert c.post("/api/auth/login", json={"username": "admin", "password": "nope"}).status_code == 401
-    assert c.post("/api/auth/login", json={"username": "admin", "password": TEST_PASSWORD}).status_code == 429
-    assert [e["action"] for e in db.list_audit()][:1] == ["Sign-in failed"]
-    assert c.post("/api/auth/login", json={"username": "nobody", "password": "x"}).status_code == 429
+        resp = c.post("/api/auth/login", json={"username": "admin", "password": "nope"})
+        assert (resp.status_code, resp.json()["detail"]) == (401, "Invalid username or password")
+    blocked = c.post("/api/auth/login", json={"username": "admin", "password": TEST_PASSWORD})  # even the right password
+    assert blocked.status_code == 429 and 0 < int(blocked.headers["Retry-After"]) <= auth.COOLDOWN_SECONDS
+    actions = [e["action"] for e in db.list_audit()]
+    assert actions[0] == "Sign-in blocked (cooldown)" and actions[1:6] == ["Sign-in failed"] * 5
+    assert c.post("/api/auth/login", json={"username": "viewer", "password": TEST_PASSWORD}).status_code == 200  # per username
 
 
 def test_viewer_reads_but_cannot_change_anything(db):

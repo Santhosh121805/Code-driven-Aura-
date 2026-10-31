@@ -1315,18 +1315,14 @@ function setCollapsed(collapsed) {
   storeSet("sidebarCollapsed", collapsed);
 }
 
+/** No (or an expired) session: back to the public home page with the sign-in card open. */
 function showLogin() {
   state.me = null;
-  closeDrawer();
-  $("#appView").classList.add("hidden");
-  $("#loginView").classList.remove("hidden");
-  document.title = "Sign in · PlugSec";
-  setTimeout(() => $("#loginUser").focus(), 30);
+  location.replace("/#signin");
 }
 
 async function startApp(me) {
   state.me = me;
-  $("#loginView").classList.add("hidden");
   $("#appView").classList.remove("hidden");
   $("#userName").textContent = me.user;
   $("#userAvatar").textContent = initials(me.user);
@@ -1337,21 +1333,6 @@ async function startApp(me) {
     Object.assign(ENTITY_FIELDS, state.meta.entity_fields || {});
   } catch { /* shown via the Live indicator */ }
   showPage(location.hash.slice(1) || storeGet("page", "overview"));
-}
-
-async function onLogin(evt) {
-  evt.preventDefault();
-  const btn = $("#loginBtn");
-  $("#loginError").textContent = "";
-  btn.disabled = true;
-  try {
-    const me = await api("/api/auth/login", { method: "POST", body: { username: $("#loginUser").value.trim(), password: $("#loginPass").value } });
-    $("#loginPass").value = "";
-    await startApp(me);
-  } catch (e) {
-    $("#loginError").textContent = errorList(e)[0];
-    $("#loginPass").select();
-  } finally { btn.disabled = false; }
 }
 
 /* ------------------------------------------------------------------ boot */
@@ -1371,8 +1352,7 @@ function boot() {
   setCollapsed(storeGet("sidebarCollapsed", false));
   setYamlOpen(storeGet("yamlOpen", true));
 
-  $("#loginForm").addEventListener("submit", onLogin);
-  $("#logoutBtn").addEventListener("click", async () => { try { await api("/api/auth/logout", { method: "POST" }); } catch { /* ignore */ } showLogin(); });
+  $("#logoutBtn").addEventListener("click", async () => { try { await api("/api/auth/logout", { method: "POST" }); } catch { /* ignore */ } location.replace("/"); });
   $("#themeBtn").addEventListener("click", () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
   $("#collapseBtn").addEventListener("click", () => setCollapsed(!$("#appView").classList.contains("collapsed")));
   $("#demoBtn").addEventListener("click", () => { if (can("admin")) demoDrawer(); });

@@ -118,21 +118,52 @@ def allowed(role: str, needed: str) -> bool:
     return RANK.get(role, -1) >= RANK[needed]
 
 
-# ------------------------------------------------------------------ brute-force throttle
-MAX_FAILURES, WINDOW_SECONDS = 5, 60
+# ------------------------------------------------------------------ brute-force cooldown
+# 5 failures for one username from one address -> 30 s cooldown for that pair. A wider per-address budget stops
+# cycling through usernames. A successful sign-in clears the pair.
+MAX_FAILURES, COOLDOWN_SECONDS, MAX_FAILURES_PER_ADDRESS = 5, 30, 20
 _failures: dict[str, deque] = defaultdict(deque)
 
 
-def throttled(client: str, now: float | None = None) -> bool:
+def _keys(client: str, username: str) -> list[tuple[str, int]]:
+    return [(f"user:{client}|{username.strip().lower()}", MAX_FAILURES), (f"addr:{client}", MAX_FAILURES_PER_ADDRESS)]
+
+
+def cooldown_left(client: str, username: str, now: float | None = None) -> int:
+    """Seconds until this username/address may try again (0 = allowed)."""
     now = now or time.time()
-    recent = _failures[client]
-    while recent and recent[0] < now - WINDOW_SECONDS:
-        recent.popleft()
-    return len(recent) >= MAX_FAILURES
+    left = 0.0
+    for key, limit in _keys(client, username):
+        recent = _failures[key]
+        while recent and recent[0] < now - COOLDOWN_SECONDS - 60:  # forget old attempts
+            recent.popleft()
+        if len(recent) >= limit:
+            left = max(left, recent[-1] + COOLDOWN_SECONDS - now)
+            if recent[-1] + COOLDOWN_SECONDS <= now:
+                recent.clear()  # cooldown served: a fresh budget
+    return int(left + 0.999) if left > 0 else 0
 
 
-def note_failure(client: str, now: float | None = None) -> None:
-    _failures[client].append(now or time.time())
+def note_failure(client: str, username: str, now: float | None = None) -> None:
+    for key, _ in _keys(client, username):
+        _failures[key].append(now or time.time())
+
+
+def clear_failures(client: str, username: str) -> None:
+    _failures.pop(_keys(client, username)[0][0], None)
+
+
+# ------------------------------------------------------------------ demo hint for the public sign-in card
+def demo_mode() -> bool:
+    return (os.environ.get("DEMO_MODE") or "").strip().lower() in ("on", "1", "true", "yes")
+
+
+def demo_usernames() -> dict[str, str]:
+    """First account per role, used only to pre-fill the username field in demo mode. Never passwords."""
+    out: dict[str, str] = {}
+    for name, (role, _) in load_users().items():
+        out.setdefault(role, name)
+    return out
 
 
 # ------------------------------------------------------------------ CLI

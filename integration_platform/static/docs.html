@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Docs · PlugSec</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232DD4BF'/%3E%3Cpath d='M11 9v6m10-6v6M8 15h16v3a8 8 0 0 1-16 0zm8 11v-3' stroke='%230B0F14' stroke-width='2.4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+  <script>
+    try { const t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = JSON.parse(t); } catch (e) { /* storage unavailable */ }
+  </script>
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/site.css">
+</head>
+<body class="site docs">
+  <header class="site-nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="/" aria-label="PlugSec home"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">PlugSec</span><span class="muted brand-sub">Docs</span></a>
+      <nav class="nav-links" aria-label="Site">
+        <a href="/#how">How it works</a>
+        <a href="/#features">Features</a>
+        <a href="/docs" aria-current="page">Docs</a>
+      </nav>
+      <button class="icon-btn theme-toggle" type="button" aria-label="Switch theme" title="Switch theme"></button>
+      <a class="btn primary sm" href="/#signin">Sign in</a>
+    </div>
+  </header>
+
+  <div class="wrap docs-layout">
+    <aside class="docs-side">
+      <label class="docs-picker"><span class="sr-only">Topic</span><select id="docsPicker" aria-label="Topic"></select></label>
+      <nav class="docs-nav" id="docsNav" aria-label="Documentation">
+        <a href="#overview">Overview</a>
+        <a href="#quick-start">Quick start</a>
+        <a href="#add-integration">Add an integration</a>
+        <a href="#config">Config reference</a>
+        <a href="#schema">Common schema</a>
+        <a href="#reliability">Reliability</a>
+        <a href="#security">Security</a>
+        <a href="#roles">Roles &amp; permissions</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+    </aside>
+
+    <main class="docs-content" id="docsContent">
+
+      <!-- ============================================================ Overview -->
+      <article class="doc" id="overview">
+        <h1>Overview</h1>
+        <p class="lede">PlugSec connects security tools with a config file instead of code. You describe a tool once; one engine handles login, paging, retries and mapping, and every record lands in one common format.</p>
+        <figure class="diagram" aria-label="Config goes into the engine, which writes users, devices and events to one store that the dashboard reads">
+          <svg viewBox="0 0 720 150" role="img">
+            <title>Config, engine, common store, dashboard</title>
+            <g class="d-box"><rect x="4" y="45" width="140" height="60" rx="10"/><text x="74" y="72">Config</text><text x="74" y="91" class="d-sub">YAML or web form</text></g>
+            <g class="d-box accent"><rect x="190" y="45" width="150" height="60" rx="10"/><text x="265" y="72">Engine</text><text x="265" y="91" class="d-sub">login · paging · retries</text></g>
+            <g class="d-box"><rect x="386" y="8" width="150" height="38" rx="9"/><text x="461" y="32">Users</text></g>
+            <g class="d-box"><rect x="386" y="56" width="150" height="38" rx="9"/><text x="461" y="80">Devices</text></g>
+            <g class="d-box"><rect x="386" y="104" width="150" height="38" rx="9"/><text x="461" y="128">Events</text></g>
+            <g class="d-box"><rect x="582" y="45" width="134" height="60" rx="10"/><text x="649" y="72">Dashboard</text><text x="649" y="91" class="d-sub">health · alerts</text></g>
+            <g class="d-line"><path d="M144 75h40"/><path d="M340 75h18M358 27v96M358 27h22M358 75h22M358 123h22"/><path d="M536 27h22M536 75h22M536 123h22M558 27v96M558 75h18"/></g>
+            <g class="d-arrow"><path d="m178 70 8 5-8 5"/><path d="m374 22 8 5-8 5M374 70l8 5-8 5M374 118l8 5-8 5"/><path d="m570 70 8 5-8 5"/></g>
+          </svg>
+        </figure>
+        <h2>What you get</h2>
+        <ul>
+          <li><b>Config, not code.</b> A new tool is a YAML file in <code>configs/integrations/</code> or the <b>Add integration</b> wizard. It goes live without a restart.</li>
+          <li><b>One common schema.</b> Users, devices and events from every tool sit in the same tables, each row tagged with its <code>source</code> and <code>fetched_at</code>.</li>
+          <li><b>Reliable by default.</b> The same retry, rate-limit and quarantine rules apply to every connection.</li>
+          <li><b>Safe secrets.</b> Configs hold names like <code>${github_token}</code>; values live in <code>.env</code> and an encrypted vault.</li>
+          <li><b>Visible health.</b> Each connection shows its status, last run, records and errors, with alerts on repeated failure.</li>
+        </ul>
+      </article>
+
+      <!-- ============================================================ Quick start -->
+      <article class="doc" id="quick-start" hidden>
+        <h1>Quick start</h1>
+        <p class="lede">You need Python 3.11 or newer, on Windows or macOS.</p>
+        <h2>1. Install and run</h2>
+        <pre class="code" data-copyable>python -m venv .venv
+.venv\Scripts\activate          # macOS / Linux: source .venv/bin/activate
+pip install -r requirements.txt
+python run_all.py</pre>
+        <p>On the first run, <code>run_all.py</code>:</p>
+        <ul>
+          <li>creates <code>.env</code> from <code>.env.example</code>,</li>
+          <li>generates <code>SECRETS_KEY</code>, the master key of the encrypted vault,</li>
+          <li>creates three sign-ins (<code>admin</code>, <code>analyst</code>, <code>viewer</code>) and prints their passwords <b>once</b>. Only hashes are saved.</li>
+        </ul>
+        <h2>2. Add your API keys</h2>
+        <p>Fill in the keys for the tools you use in <code>.env</code>. A connection without its keys shows <b>Not configured</b> and never runs.</p>
+        <pre class="code" data-copyable>github_token=     GITHUB_OWNER=     GITHUB_REPO=
+okta_token=       OKTA_DOMAIN=integrator-1234567.okta.com
+jira_email=       jira_token=       JIRA_DOMAIN=yourteam.atlassian.net
+nvd_api_key=      # optional</pre>
+        <h2>3. Sign in and see data</h2>
+        <ol>
+          <li>Open <code>http://localhost:8000</code> and sign in with one of the printed accounts.</li>
+          <li><b>Overview</b> shows connection health and the last 24 hours.</li>
+          <li><b>Integrations</b> lists every connection; <b>Run now</b> pulls data immediately (analyst or admin).</li>
+          <li><b>Events</b>, <b>Users</b> and <b>Devices</b> show the records in the common format. Click a row for every field and the raw JSON.</li>
+        </ol>
+        <p>Forgot a password? <code>python -m integration_platform.auth set-password admin admin</code> sets a new one; restart the platform afterwards.</p>
+      </article>
+
+      <!-- ============================================================ Add an integration -->
+      <article class="doc" id="add-integration" hidden>
+        <h1>Add an integration</h1>
+        <p class="lede">Admins add a tool from <b>Add integration</b> in the sidebar, or by dropping a YAML file into <code>configs/integrations/</code> (picked up within 5 seconds).</p>
+        <h2>The wizard, step by step</h2>
+        <ol>
+          <li><b>Basics</b>: display name, integration ID, base URL and schedule.</li>
+          <li><b>Auth</b>: pick the login type and reference secrets by name.</li>
+          <li><b>Request</b>: the endpoint path, method and query parameters.</li>
+          <li><b>Pagination</b>: how the API splits results across pages.</li>
+          <li><b>Mapping</b>: fetch a sample response; the assistant suggests which tool field fills which common field. Code checks every path against the sample, and you approve or edit it.</li>
+          <li><b>Test</b>: runs the config once against the real API, without saving, and shows the first records raw and normalised.</li>
+          <li><b>Save</b>: writes the YAML file and schedules it right away.</li>
+        </ol>
+        <p>A live YAML panel stays in sync with the form; you can edit either side.</p>
+        <h2>Example: CISA KEV</h2>
+        <p>The CISA Known Exploited Vulnerabilities feed is public JSON: no login, no paging.</p>
+        <pre class="code" data-copyable>name: cisa_kev
+display_name: "CISA KEV"
+enabled: true
+base_url: "https://www.cisa.gov"
+auth: { type: none }
+schedule_seconds: 900
+streams:
+  - name: kev
+    entity: event
+    endpoint: "/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+    records_path: "vulnerabilities"
+    timeout_seconds: 60
+    mapping:
+      id: "cveID"
+      type: "'vulnerability'"
+      timestamp: "dateAdded"
+      description: "vulnerabilityName"
+    transforms: { default_severity: high, time_format: iso8601 }</pre>
+        <h3>Line by line</h3>
+        <dl class="explain">
+          <dt><code>name</code></dt><dd>Unique ID (lowercase, digits, underscores). It becomes the <code>source</code> of every record.</dd>
+          <dt><code>display_name</code></dt><dd>The name shown in the dashboard.</dd>
+          <dt><code>enabled</code></dt><dd>Whether it runs on its schedule.</dd>
+          <dt><code>base_url</code></dt><dd>The API's address. It may reference a setting, e.g. <code>https://${OKTA_DOMAIN}</code>.</dd>
+          <dt><code>auth</code></dt><dd><code>none</code>: the feed is public.</dd>
+          <dt><code>schedule_seconds</code></dt><dd>Run every 900 seconds (15 minutes).</dd>
+          <dt><code>streams</code></dt><dd>One config can pull several endpoints; each stream fills one table.</dd>
+          <dt><code>entity: event</code></dt><dd>These records go to the events table.</dd>
+          <dt><code>endpoint</code></dt><dd>The path added to <code>base_url</code>.</dd>
+          <dt><code>records_path</code></dt><dd>Where the list of records sits in the response (JMESPath). Empty means the response itself is the list.</dd>
+          <dt><code>timeout_seconds</code></dt><dd>The feed is large, so allow 60 seconds.</dd>
+          <dt><code>mapping</code></dt><dd>Common field on the left, tool field on the right. <code>'vulnerability'</code> in single quotes is a constant.</dd>
+          <dt><code>transforms</code></dt><dd>KEV has no severity, so every record gets <code>high</code>; dates are ISO 8601.</dd>
+        </dl>
+      </article>
+
+      <!-- ============================================================ Config reference -->
+      <article class="doc" id="config" hidden>
+        <h1>Config reference</h1>
+        <p class="lede">Every field is checked when you save. Errors name the field and say what to fix.</p>
+        <h2>Top level</h2>
+        <div class="table-scroll"><table class="doc-table">
+          <thead><tr><th>Field</th><th>Default</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><code>name</code></td><td>required</td><td>Unique ID: lowercase letters, digits, underscores.</td></tr>
+            <tr><td><code>display_name</code></td><td>required</td><td>Name shown in the dashboard.</td></tr>
+            <tr><td><code>base_url</code></td><td>required</td><td>API address; may use <code>${SETTING}</code>.</td></tr>
+            <tr><td><code>auth</code></td><td>required</td><td>See auth types below.</td></tr>
+            <tr><td><code>scopes</code></td><td><code>[]</code></td><td>Permissions the credential holds. Write or admin scopes get a warning; requested at the token endpoint for OAuth2.</td></tr>
+            <tr><td><code>headers</code></td><td><code>{}</code></td><td>Sent with every request.</td></tr>
+            <tr><td><code>schedule_seconds</code></td><td><code>900</code></td><td>How often it runs (5 to 86,400).</td></tr>
+            <tr><td><code>retry</code></td><td>3 × 1 s, exponential</td><td><code>max_retries</code>, <code>backoff</code> (exponential or fixed), <code>base_seconds</code>, <code>max_seconds</code>.</td></tr>
+            <tr><td><code>rate_limit</code></td><td>see Reliability</td><td><code>reset_header</code>, <code>remaining_header</code>, <code>min_interval_seconds</code>, <code>fallback_wait_seconds</code>, <code>max_wait_seconds</code>.</td></tr>
+            <tr><td><code>streams</code></td><td>required</td><td>At least one stream (below).</td></tr>
+            <tr><td><code>secret_max_age_days</code></td><td><code>90</code></td><td>Health shows "Rotate secret" after this many days.</td></tr>
+            <tr><td><code>alert_after_failures</code></td><td><code>3</code></td><td>Alert once after this many failed runs in a row.</td></tr>
+            <tr><td><code>exfiltration_guard</code></td><td>on, 5×</td><td>Token abuse detection; see Security.</td></tr>
+            <tr><td><code>custom_step</code></td><td>none</td><td>Optional plugin for unusual APIs; see FAQ.</td></tr>
+          </tbody></table></div>
+        <h2>Auth types</h2>
+        <div class="table-scroll"><table class="doc-table">
+          <thead><tr><th>Type</th><th>Fields</th><th>Example use</th></tr></thead>
+          <tbody>
+            <tr><td><code>none</code></td><td>-</td><td>Public feeds such as CISA KEV.</td></tr>
+            <tr><td><code>bearer</code></td><td><code>token</code>, <code>optional</code></td><td><code>Authorization: Bearer …</code> (GitHub).</td></tr>
+            <tr><td><code>api_key</code></td><td><code>header</code> (default <code>X-API-Key</code>), <code>api_key</code>, <code>prefix</code>, <code>optional</code></td><td>Okta: header <code>Authorization</code>, prefix <code>"SSWS "</code>. NVD: <code>optional: true</code>.</td></tr>
+            <tr><td><code>basic</code></td><td><code>username</code>, <code>password</code></td><td>Jira Cloud (email + API token).</td></tr>
+            <tr><td><code>oauth2_client_credentials</code></td><td><code>token_url</code>, <code>client_id</code>, <code>client_secret</code></td><td>Tokens are fetched, cached and refreshed automatically.</td></tr>
+          </tbody></table></div>
+        <p>Secret fields must be a reference such as <code>${OKTA_TOKEN}</code>. A pasted secret is rejected.</p>
+        <pre class="code" data-copyable>auth: { type: api_key, header: Authorization, prefix: "SSWS ", api_key: "${okta_token}" }</pre>
+        <h2>Pagination types</h2>
+        <div class="table-scroll"><table class="doc-table">
+          <thead><tr><th>Type</th><th>Fields</th><th>Stops when</th></tr></thead>
+          <tbody>
+            <tr><td><code>none</code></td><td>-</td><td>After one request.</td></tr>
+            <tr><td><code>page</code></td><td><code>page_param</code>, <code>size_param</code>, <code>page_size</code>, <code>start_page</code>, <code>total_pages_path</code></td><td>Empty page, or the last page reported.</td></tr>
+            <tr><td><code>offset</code></td><td><code>limit_param</code>, <code>offset_param</code>, <code>limit</code>, <code>total_path</code></td><td>A short page, or the total is reached.</td></tr>
+            <tr><td><code>cursor</code></td><td><code>cursor_path</code>, <code>cursor_param</code></td><td>The cursor is empty.</td></tr>
+            <tr><td><code>link</code></td><td><code>next_path</code> (empty = <code>Link</code> header)</td><td>No next link, or an empty page. Links to other hosts are refused.</td></tr>
+          </tbody></table></div>
+        <p>Every type except <code>none</code> also has <code>max_pages</code> (default 10).</p>
+        <h2>Streams</h2>
+        <div class="table-scroll"><table class="doc-table">
+          <thead><tr><th>Field</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><code>name</code>, <code>entity</code></td><td>Stream ID and the table it fills: <code>user</code>, <code>device</code> or <code>event</code>.</td></tr>
+            <tr><td><code>endpoint</code>, <code>method</code></td><td>Path (starts with <code>/</code>) and <code>GET</code> or <code>POST</code> (with <code>body</code>).</td></tr>
+            <tr><td><code>params</code>, <code>headers</code></td><td>Query parameters and extra headers. <code>{{ last_sync }}</code> in a parameter fetches only new data.</td></tr>
+            <tr><td><code>records_path</code></td><td>JMESPath to the list of records.</td></tr>
+            <tr><td><code>mapping</code></td><td>Common field → JMESPath in one record.</td></tr>
+            <tr><td><code>required_fields</code></td><td>Default: <code>id</code>, plus <code>timestamp</code> for events. Records without them are quarantined.</td></tr>
+            <tr><td><code>requires_env</code></td><td>Skip the stream unless these settings exist (e.g. <code>GITHUB_ORG</code>).</td></tr>
+            <tr><td><code>fallback_for</code></td><td>Run only when the named stream was unavailable (HTTP 403/404).</td></tr>
+            <tr><td><code>timeout_seconds</code></td><td>Per request, default 15.</td></tr>
+          </tbody></table></div>
+        <h2>Mapping and transforms</h2>
+        <pre class="code" data-copyable>mapping:
+  id: uuid                                   # plain path
+  user: actor.alternateId                    # nested value
+  name: "join(' ', [profile.firstName || '', profile.lastName || ''])"   # combine fields
+  type: "'vulnerability'"                    # constant
+transforms:
+  severity_map: { DEBUG: info, INFO: info, WARN: medium, ERROR: high }
+  default_severity: info                     # when the value is missing or unknown
+  time_format: iso8601                       # iso8601 | epoch_s | epoch_ms</pre>
+        <p>Times are always stored as ISO 8601 in UTC. Severities are always one of <code>info</code>, <code>low</code>, <code>medium</code>, <code>high</code>, <code>critical</code>.</p>
+      </article>
+
+      <!-- ============================================================ Common schema -->
+      <article class="doc" id="schema" hidden>
+        <h1>Common schema</h1>
+        <p class="lede">Three tables, the same for every tool. Each row also stores <code>source</code> (the integration ID), <code>stream</code>, <code>fetched_at</code> and the untouched <code>raw</code> record. A record is unique per source and ID, so re-runs update instead of duplicating.</p>
+        <h2>Users</h2>
+        <div class="table-scroll"><table class="doc-table"><thead><tr><th>Field</th><th>Meaning</th></tr></thead><tbody>
+          <tr><td><code>id</code></td><td>The tool's ID for the account (required).</td></tr>
+          <tr><td><code>name</code></td><td>Display name.</td></tr>
+          <tr><td><code>email</code></td><td>Email address.</td></tr>
+          <tr><td><code>status</code></td><td>For example active, suspended, provisioned.</td></tr>
+          <tr><td><code>last_login</code></td><td>ISO 8601, UTC.</td></tr>
+        </tbody></table></div>
+        <h2>Devices</h2>
+        <div class="table-scroll"><table class="doc-table"><thead><tr><th>Field</th><th>Meaning</th></tr></thead><tbody>
+          <tr><td><code>id</code></td><td>The tool's ID for the device (required).</td></tr>
+          <tr><td><code>hostname</code></td><td>Host name.</td></tr>
+          <tr><td><code>ip</code></td><td>IP address.</td></tr>
+          <tr><td><code>os</code></td><td>Operating system.</td></tr>
+          <tr><td><code>owner</code></td><td>Person or team responsible.</td></tr>
+          <tr><td><code>last_seen</code></td><td>ISO 8601, UTC.</td></tr>
+        </tbody></table></div>
+        <h2>Events</h2>
+        <div class="table-scroll"><table class="doc-table"><thead><tr><th>Field</th><th>Meaning</th></tr></thead><tbody>
+          <tr><td><code>id</code></td><td>The tool's ID for the event (required).</td></tr>
+          <tr><td><code>type</code></td><td>What happened, e.g. <code>user.session.start</code> or <code>vulnerability</code>.</td></tr>
+          <tr><td><code>severity</code></td><td>info, low, medium, high or critical.</td></tr>
+          <tr><td><code>timestamp</code></td><td>When it happened; ISO 8601, UTC (required).</td></tr>
+          <tr><td><code>description</code></td><td>One readable line.</td></tr>
+          <tr><td><code>host</code>, <code>src_ip</code>, <code>dst_ip</code></td><td>Where it happened.</td></tr>
+          <tr><td><code>user</code></td><td>Who was involved.</td></tr>
+          <tr><td><code>ticket_key</code></td><td>Jira ticket opened for it, if any.</td></tr>
+        </tbody></table></div>
+      </article>
+
+      <!-- ============================================================ Reliability -->
+      <article class="doc" id="reliability" hidden>
+        <h1>Reliability</h1>
+        <p class="lede">These rules are the same for every connection; no config needed.</p>
+        <h2>Retries</h2>
+        <ul>
+          <li><b>Timeouts, network errors and 5xx</b>: retry after exactly 1 s, 2 s and 4 s. If all fail, the run is marked failed with a clear error.</li>
+          <li><b>401 and 403</b>: never retried. Health shows <b>Auth failed</b>, because retrying a wrong key cannot help.</li>
+        </ul>
+        <h2>Rate limits (HTTP 429)</h2>
+        <ol>
+          <li>Wait as long as <code>Retry-After</code> says (seconds or an HTTP date).</li>
+          <li>Without it, wait for the configured reset header (GitHub <code>x-ratelimit-reset</code>, Okta <code>x-rate-limit-reset</code>).</li>
+          <li>Without that, back off exponentially.</li>
+        </ol>
+        <p>If an API answers <code>Retry-After: 0</code> (NVD does), the engine waits the API's known window (<code>fallback_wait_seconds</code>) instead of hammering it. When the remaining-requests header is near zero, the next call waits for the reset first, and <code>min_interval_seconds</code> paces APIs that ask for it. Every wait is logged, e.g. "waited 5s due to Retry-After".</p>
+        <h2>Bad records</h2>
+        <p>A record with a missing required field, the wrong type or an unreadable time is <b>quarantined</b> with its reason. The rest of the run is stored, and the card shows "N records quarantined · View".</p>
+        <h2>Health statuses</h2>
+        <div class="table-scroll"><table class="doc-table"><thead><tr><th>Status</th><th>Meaning</th></tr></thead><tbody>
+          <tr><td><span class="pill ok"><i></i>Healthy</span></td><td>The last run succeeded.</td></tr>
+          <tr><td><span class="pill warn"><i></i>Warning</span></td><td>It succeeded after retries, or one stream failed.</td></tr>
+          <tr><td><span class="pill bad"><i></i>Failing</span></td><td>The last run failed.</td></tr>
+          <tr><td><span class="pill bad"><i></i>Auth failed</span></td><td>The tool rejected the credentials.</td></tr>
+          <tr><td><span class="pill bad"><i></i>Suspicious</span></td><td>Paused by token abuse detection.</td></tr>
+          <tr><td><span class="pill idle"><i></i>Paused</span></td><td>Disabled by an admin.</td></tr>
+          <tr><td><span class="pill idle"><i></i>Not configured</span></td><td>A required setting is missing from <code>.env</code>.</td></tr>
+          <tr><td><span class="pill idle"><i></i>Pending</span></td><td>Waiting for its first run.</td></tr>
+        </tbody></table></div>
+        <h2>Alerts on repeated failure</h2>
+        <p>After 3 failed runs in a row (<code>alert_after_failures</code>), PlugSec sends <b>one</b> alert for that streak to Slack (<code>SLACK_WEBHOOK_URL</code>) and email if configured, and a "recovered" message once it works again. The dashboard banner and the log always get it.</p>
+      </article>
+
+      <!-- ============================================================ Security -->
+      <article class="doc" id="security" hidden>
+        <h1>Security</h1>
+        <h2>Secrets by name only</h2>
+        <p>Configs hold a name such as <code>${github_token}</code>, never the value. A pasted secret is rejected when the config is saved.</p>
+        <h2>Encrypted vault</h2>
+        <p>On first use, each referenced secret is copied from <code>.env</code> into the vault, encrypted with <code>SECRETS_KEY</code> (Fernet). No API ever returns a secret value.</p>
+        <h2>Log masking</h2>
+        <p>Every log line and stored error passes a filter that masks known secret values, bearer / basic / SSWS headers, JWTs, AWS keys and <code>key=value</code> secrets.</p>
+        <h2>Git hygiene</h2>
+        <p><code>.env</code>, the database (with the vault) and the logs are git-ignored. A test scans committed files and logs for real secret values.</p>
+        <h2>Rotate and revoke</h2>
+        <p>Health shows <b>Rotate secret</b> when a secret is older than <code>secret_max_age_days</code>. <b>Revoke</b> (admin) disables the connection and wipes its secrets; a tombstone stops <code>.env</code> from bringing them back.</p>
+        <h2>Token abuse detection</h2>
+        <p>Each connection learns how many records a normal run pulls (the median of its last 10 good runs). A run that pulls more than 5 times that, and at least 50 records, pauses the connection, raises a critical alert and opens a ticket. If the jump is expected, for example a first full scan, an admin clicks <b>Resume</b> and the baseline is re-learnt from then on.</p>
+        <p class="callout">Why it matters: in August 2025, attackers used OAuth tokens stolen from the Salesloft Drift chat integration to export large amounts of data from hundreds of organisations' Salesforce instances. The tokens were valid, so logins looked normal; the unusual signal was the volume of data leaving. That is the pattern this check watches for.</p>
+        <h2>Roles and the audit log</h2>
+        <p>Every page and API needs a session; the server checks the role on every request. The audit log records sign-ins, failed sign-ins, denied requests and every change, with user, role, target and outcome. After 5 failed sign-ins, that username is locked for 30 seconds from that address.</p>
+      </article>
+
+      <!-- ============================================================ Roles -->
+      <article class="doc" id="roles" hidden>
+        <h1>Roles &amp; permissions</h1>
+        <p class="lede">The role comes from the account on the server. The dashboard locks controls a role cannot use, and the API refuses them too.</p>
+        <div class="table-scroll"><table class="doc-table roles-table">
+          <thead><tr><th>Action</th><th>Viewer</th><th>Analyst</th><th>Admin</th></tr></thead>
+          <tbody>
+            <tr><td>View Overview, Events, Users, Devices</td><td>✓</td><td>✓</td><td>✓</td></tr>
+            <tr><td>View integrations, health and actions</td><td>✓</td><td>✓</td><td>✓</td></tr>
+            <tr><td>Run a connection now</td><td>-</td><td>✓</td><td>✓</td></tr>
+            <tr><td>Add or edit an integration (wizard, test, sample)</td><td>-</td><td>-</td><td>✓</td></tr>
+            <tr><td>AI mapping suggestions</td><td>-</td><td>-</td><td>✓</td></tr>
+            <tr><td>Enable, disable, resume, delete</td><td>-</td><td>-</td><td>✓</td></tr>
+            <tr><td>Store or revoke secrets</td><td>-</td><td>-</td><td>✓</td></tr>
+            <tr><td>Demo controls</td><td>-</td><td>-</td><td>✓</td></tr>
+            <tr><td>Audit log</td><td>-</td><td>-</td><td>✓</td></tr>
+          </tbody></table></div>
+        <p>Add a user or change a role with <code>python -m integration_platform.auth set-password &lt;user&gt; &lt;role&gt;</code>. Changing someone's role ends their current session.</p>
+      </article>
+
+      <!-- ============================================================ FAQ -->
+      <article class="doc" id="faq" hidden>
+        <h1>FAQ</h1>
+        <h2>What if an API is unusual?</h2>
+        <p>Most APIs fit the config options. For the rare case that does not, an admin can add a small plugin: a class with <code>process(records, config)</code> that runs on the raw records before mapping, referenced as <code>custom_step</code>.</p>
+        <pre class="code" data-copyable>custom_step: "integration_platform.plugins.example_step.KevSeverity"</pre>
+        <h2>Where is data stored?</h2>
+        <p>In one SQLite file, <code>data/platform.db</code>. The tables <code>users</code>, <code>devices</code> and <code>events</code> hold the common schema; others hold runs, quarantined records, sync state, the encrypted secrets, actions and the audit log.</p>
+        <h2>Does AI change data?</h2>
+        <p>No. The assistant only suggests a mapping from a sample. Code checks every suggested path against the sample and drops the ones that do not exist, and an admin reviews and applies it. Secrets and personal data are masked before anything is sent. Without an AI key, a rule-based mapper does the same job offline.</p>
+        <h2>Does it need the internet?</h2>
+        <p>Only to reach the tools you connect. The dashboard and docs load no external scripts or fonts.</p>
+      </article>
+
+      <nav class="doc-pager" id="docPager" aria-label="Previous and next topic"></nav>
+    </main>
+  </div>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <span>Built for CyberForge 2026 · Mitigata</span>
+      <a class="link" href="/">Home</a>
+    </div>
+  </footer>
+  <script src="/static/site.js"></script>
+</body>
+</html>

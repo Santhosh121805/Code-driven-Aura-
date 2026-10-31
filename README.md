@@ -93,7 +93,16 @@ python run_all.py
 
 On first run, `run_all.py` creates `.env` from `.env.example`, generates `SECRETS_KEY` (the vault master key) and creates three dashboard sign-ins, printing their passwords **once** (only scrypt hashes are stored in `.env`). Then it starts the platform at http://localhost:8000.
 
-Tests: `python -m pytest`. There are 183 tests; they are hermetic and never read your `.env` or call real APIs.
+| Address | Who can open it |
+|---|---|
+| `/` | Everyone: the home page with the sign-in card (no live data, no protected API calls) |
+| `/docs` | Everyone: the documentation (overview, quick start, config reference, schema, reliability, security, roles, FAQ) |
+| `/login` | Everyone: redirects to the sign-in card |
+| `/app` | Signed-in users only: the dashboard. Without a session it redirects to `/#signin`; signing out returns to `/` |
+
+Set `DEMO_MODE=on` in `.env` to let the sign-in card pre-fill the username for the picked role and show "Demo accounts are configured in .env". Passwords are never shown, and the role always comes from the account on the server, not from the picked tab.
+
+Tests: `python -m pytest`. There are 194 tests; they are hermetic and never read your `.env` or call real APIs.
 
 ## Sign-in, roles and audit
 
@@ -104,7 +113,7 @@ Tests: `python -m pytest`. There are 183 tests; they are hermetic and never read
 | **Admin** | Everything: Add integration (wizard, test, sample, AI mapping), enable / disable, resume, revoke and store secrets, demo controls, **Audit log** |
 
 - The API enforces the rules (`auth.required_role`); the UI only mirrors them. Locked controls show a lock icon and "Admin only" / "Analyst only".
-- Sessions are HMAC-signed HttpOnly cookies (SameSite=Lax, 12 h). Removing a user or changing their role ends their session. Five failed sign-ins per minute from one address are throttled.
+- Sessions are HMAC-signed HttpOnly cookies (SameSite=Lax, 12 h). Removing a user or changing their role ends their session. After 5 failed sign-ins for one username from one address, that pair waits 30 s (20 failures per address across usernames). Failed and blocked sign-ins are audited, and the error never says whether the username or the password was wrong.
 - Change a password or add a user: `python -m integration_platform.auth set-password <user> <role>`.
 - `GET /api/audit` (admin) lists sign-ins, denied calls and every change, with user, role, target and outcome. A demo reset never clears it.
 
@@ -176,7 +185,7 @@ All five sources run successfully with the keys in `.env`. Without a key, a card
 
 ## 3-minute demo script
 
-Before going on stage: `python run_all.py`, sign in as **admin** at http://localhost:8000, and open your Jira project `KAN` in another tab. If CISA KEV is already listed, remove it (⋯ → Delete integration) so step 2 can add it live.
+Before going on stage: `python run_all.py`, open http://localhost:8000 (the home page), sign in as **admin**, and open your Jira project `KAN` in another tab. If CISA KEV is already listed, remove it (⋯ → Delete integration) so step 2 can add it live.
 
 1. **One common format (30 s).** **Overview**: connected tools, events and critical events in the last 24 h, events by severity. **Events**: GitHub Dependabot alerts, the Okta system log, NVD CVEs and Jira issues in one table; click a row for the normalised fields and the raw JSON. **Users**: Okta, Jira and GitHub accounts side by side.
    > "Different APIs, logins and paging. One schema, one store."
@@ -200,10 +209,10 @@ Before going on stage: `python run_all.py`, sign in as **admin** at http://local
 integration_platform/  config.py (models, validation, ${NAME} resolution) · engine.py (auth, paging, retries, rate limits, runs)
                        normaliser.py (common schema, quarantine rules) · db.py (users/devices/events, runs, audit, vault rows)
                        auth.py (sign-in, roles, sessions) · vault.py · logmask.py · alerts.py (B-4) · actions.py · scheduler.py
-                       ai_mapper.py · demo.py · api.py · static/ (UI: plain HTML/CSS/JS, no build step, works offline)
+                       ai_mapper.py · demo.py · api.py · static/ (app, home page and docs: plain HTML/CSS/JS, no build step, offline)
 configs/integrations/  github, okta, jira, nvd (real) · cisa_kev (added live)
 configs/actions/       create_jira_ticket.yaml (real Jira, project KAN) · slack_failure_alert.yaml (B-4)
 configs/examples/      cisa_kev.yaml (what the live demo creates)
-tests/                 183 tests, incl. test_access.py (roles, audit) and test_git_hygiene.py
+tests/                 194 tests, incl. test_access.py (roles, audit), test_public.py (public pages, sign-in) and test_git_hygiene.py
 tests/fakes/           in-process fake tools for the tests (CloudTrail, Firewall, OAuth2 Okta, Jira) + their configs and kev.json
 ```

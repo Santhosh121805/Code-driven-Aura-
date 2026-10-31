@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PlugSec · Connect any security tool with config, not code</title>
+  <meta name="description" content="One engine for login, paging, retries and mapping. Every tool lands in one common format: users, devices and events.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232DD4BF'/%3E%3Cpath d='M11 9v6m10-6v6M8 15h16v3a8 8 0 0 1-16 0zm8 11v-3' stroke='%230B0F14' stroke-width='2.4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+  <script>
+    try { const t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = JSON.parse(t); } catch (e) { /* storage unavailable */ }
+  </script>
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/site.css">
+</head>
+<body class="site">
+  <header class="site-nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="/" aria-label="PlugSec home"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">PlugSec</span></a>
+      <nav class="nav-links" aria-label="Site">
+        <a href="#how">How it works</a>
+        <a href="#features">Features</a>
+        <a href="/docs">Docs</a>
+      </nav>
+      <button class="icon-btn theme-toggle" type="button" aria-label="Switch theme" title="Switch theme"></button>
+      <a class="btn primary sm" href="#signin" data-focus-signin>Sign in</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero wrap">
+      <div class="hero-copy">
+        <h1>Connect any security tool with config, not code</h1>
+        <p class="lede">One engine for login, paging, retries and mapping. Every tool lands in one common format: users, devices and events.</p>
+        <div class="hero-actions">
+          <a class="btn primary" href="#signin" data-focus-signin>Sign in</a>
+          <a class="btn secondary" href="/docs">Read the docs</a>
+        </div>
+      </div>
+
+      <form class="card signin" id="signin" autocomplete="on" novalidate aria-labelledby="signinTitle">
+        <h2 id="signinTitle">Sign in</h2>
+        <div class="role-switch" role="radiogroup" aria-label="Account type">
+          <button type="button" role="radio" data-role="admin" aria-checked="true">Admin</button>
+          <button type="button" role="radio" data-role="analyst" aria-checked="false">Analyst</button>
+          <button type="button" role="radio" data-role="viewer" aria-checked="false">Viewer</button>
+        </div>
+        <p class="role-desc muted sm" id="roleDesc">Manage integrations, secrets, AI mapping</p>
+        <label class="field"><span class="label">Username</span>
+          <input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required placeholder="e.g. admin"></label>
+        <label class="field"><span class="label">Password</span>
+          <span class="pw">
+            <input id="password" name="password" type="password" autocomplete="current-password" required>
+            <button class="icon-btn" type="button" id="pwToggle" aria-label="Show password" aria-pressed="false"></button>
+          </span></label>
+        <div class="field-error" id="signinError" role="alert" aria-live="polite"></div>
+        <button class="btn primary block" type="submit" id="signinBtn"><span class="spinner" aria-hidden="true"></span><span class="label-text">Sign in</span></button>
+        <p class="muted xs demo-hint hidden" id="demoHint">Demo accounts are configured in .env</p>
+        <p class="muted xs">Your role comes from your account, not from the tab you pick.</p>
+      </form>
+    </section>
+
+    <section class="band" id="how" aria-labelledby="howTitle">
+      <div class="wrap">
+        <h2 class="section-title-lg" id="howTitle">How it works</h2>
+        <ol class="steps">
+          <li><span class="step-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8m-8 4h5"/></svg></span>
+            <b>Describe the tool</b><span>Write a short config, or fill in the web form.</span></li>
+          <li><span class="step-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/><path d="M19 15l.8 1.7 1.7.8-1.7.8L19 20l-.8-1.7-1.7-.8 1.7-.8z"/></svg></span>
+            <b>Map the fields</b><span>AI suggests, code verifies every path, an admin approves.</span></li>
+          <li><span class="step-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/></svg></span>
+            <b>One engine runs it</b><span>Fetches, pages, retries and normalises on a schedule.</span></li>
+          <li><span class="step-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg></span>
+            <b>Everything in one place</b><span>Users, devices and events, with health and alerts.</span></li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="wrap section" id="features" aria-labelledby="featuresTitle">
+      <h2 class="section-title-lg" id="featuresTitle">Features</h2>
+      <div class="feature-grid">
+        <article class="card feature"><span class="step-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 7-5 5 5 5m8-10 5 5-5 5"/></svg></span>
+          <h3>Config, not code</h3><p>A new tool is a YAML file or a web form. No restart, no deploy.</p></article>
+        <article class="card feature"><span class="step-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></span>
+          <h3>One common schema</h3><p>Every source lands as users, devices or events, in one store.</p></article>
+        <article class="card feature"><span class="step-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>
+          <h3>Safe secrets</h3><p>Encrypted vault; never in config, logs or Git.</p></article>
+        <article class="card feature"><span class="step-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg></span>
+          <h3>Reliable by default</h3><p>Retries after 1, 2 and 4 s, honours Retry-After, quarantines bad records.</p></article>
+        <article class="card feature"><span class="step-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h4l3-8 4 16 3-8h2"/></svg></span>
+          <h3>Visible health and alerts</h3><p>Status for every connection, with a Slack alert on repeated failure.</p></article>
+        <article class="card feature"><span class="step-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9m-3 3 3 3m-6 0 2 2"/></svg></span>
+          <h3>Token abuse detection</h3><p>An unusual jump in data volume pauses the connection and raises an alert.</p></article>
+      </div>
+    </section>
+
+    <section class="band" aria-labelledby="worksTitle">
+      <div class="wrap works">
+        <h2 class="section-title-lg" id="worksTitle">Works with</h2>
+        <ul class="name-chips">
+          <li>GitHub</li><li>Okta</li><li>Jira Cloud</li><li>NVD</li><li>CISA KEV</li><li>any REST API</li>
+        </ul>
+        <p class="muted sm">Bearer, API key, Basic, OAuth2 · page, cursor, link, offset</p>
+      </div>
+    </section>
+
+    <section class="wrap section" id="roles" aria-labelledby="rolesTitle">
+      <h2 class="section-title-lg" id="rolesTitle">Roles</h2>
+      <div class="role-grid">
+        <article class="card"><span class="pill role">Admin</span><p>Adds and changes integrations, manages secrets, approves AI mappings.</p></article>
+        <article class="card"><span class="pill role">Analyst</span><p>Sees every page and can run a connection on demand.</p></article>
+        <article class="card"><span class="pill role">Viewer</span><p>Read-only access to the dashboards.</p></article>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <span>Built for CyberForge 2026 · Mitigata</span>
+      <a class="link" href="/docs">Docs</a>
+    </div>
+  </footer>
+  <script src="/static/site.js"></script>
+</body>
+</html>

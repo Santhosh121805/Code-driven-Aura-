@@ -13,7 +13,7 @@ from typing import Any
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request, Response
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -90,7 +90,8 @@ async def lifespan(_: FastAPI):
     state.registry.shutdown()
 
 
-app = FastAPI(title="Config-Driven Integration Platform", version="2.0", lifespan=lifespan)
+# docs_url/redoc_url off: /docs is our own static documentation (Swagger UI would also pull from a CDN).
+app = FastAPI(title="Config-Driven Integration Platform", version="2.0", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 
@@ -100,7 +101,7 @@ async def _config_error(_, exc: ConfigError) -> JSONResponse:
 
 
 # ------------------------------------------------------------------ sign-in, roles, audit
-PUBLIC_API = {"/api/auth/login", "/api/auth/logout"}
+PUBLIC_API = {"/api/auth/login", "/api/auth/logout", "/api/auth/options"}
 AUDIT_SKIP = {"/api/integrations/validate", "/api/convert"}  # pure computations: no state change, no outbound call
 AUDIT_LABELS = {
     ("POST", "/api/integrations"): "Created integration", ("PUT", "/api/integrations/{name}"): "Updated integration",
@@ -149,20 +150,34 @@ class LoginIn(BaseModel):
     password: str
 
 
+INVALID_LOGIN = "Invalid username or password"  # one message: never say which part was wrong
+
+
 @app.post("/api/auth/login")
 def login(body: LoginIn, request: Request, response: Response) -> dict[str, Any]:
+    """The role always comes from the account on the server; anything else the client sends (e.g. a picked tab) is ignored."""
     client = request.client.host if request.client else "unknown"
-    if auth.throttled(client):
-        raise HTTPException(429, "Too many failed sign-ins. Wait a minute and try again.")
+    wait = auth.cooldown_left(client, body.username)
+    if wait:
+        _audit(body.username[:64] or "?", None, "Sign-in blocked (cooldown)", None, "denied")
+        raise HTTPException(429, f"Too many attempts. Try again in {wait} s.", headers={"Retry-After": str(wait)})
     role = auth.authenticate(body.username, body.password)
     if role is None:
-        auth.note_failure(client)
+        auth.note_failure(client, body.username)
         _audit(body.username[:64] or "?", None, "Sign-in failed", None, "denied")
-        raise HTTPException(401, "Wrong username or password")
+        raise HTTPException(401, INVALID_LOGIN)
+    auth.clear_failures(client, body.username)
     response.set_cookie(auth.COOKIE, auth.issue_session(body.username, role), max_age=auth.SESSION_SECONDS,
                         httponly=True, samesite="lax", secure=request.url.scheme == "https", path="/")
     _audit(body.username, role, "Signed in", None, "ok")
     return {"user": body.username, "role": role}
+
+
+@app.get("/api/auth/options")
+def login_options() -> dict[str, Any]:
+    """Public: what the sign-in card may show. Demo mode pre-fills usernames per role; passwords are never exposed."""
+    demo = auth.demo_mode()
+    return {"demo": demo, "usernames": auth.demo_usernames() if demo else {}}
 
 
 @app.post("/api/auth/logout")
@@ -283,9 +298,31 @@ def _get(name: str) -> IntegrationConfig:
 
 
 # ------------------------------------------------------------------ meta
+NO_CACHE = {"Cache-Control": "no-cache"}
+
+
 @app.get("/", include_in_schema=False)
-def index() -> FileResponse:
-    return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
+def landing() -> FileResponse:
+    """Public home page with the sign-in card. Static: no live data, no protected API calls."""
+    return FileResponse(STATIC / "landing.html", headers=NO_CACHE)
+
+
+@app.get("/login", include_in_schema=False)
+def login_page() -> RedirectResponse:
+    return RedirectResponse("/#signin", status_code=302)
+
+
+@app.get("/docs", include_in_schema=False)
+def docs_page() -> FileResponse:
+    return FileResponse(STATIC / "docs.html", headers=NO_CACHE)
+
+
+@app.get("/app", include_in_schema=False)
+def app_page(request: Request) -> Response:
+    """The dashboard needs a session: otherwise back to the home page with the sign-in card open."""
+    if auth.read_session(request.cookies.get(auth.COOKIE)) is None:
+        return RedirectResponse("/#signin", status_code=302)
+    return FileResponse(STATIC / "index.html", headers=NO_CACHE)
 
 
 @app.get("/health")
