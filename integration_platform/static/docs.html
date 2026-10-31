@@ -5,26 +5,28 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Docs · PlugSec</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232DD4BF'/%3E%3Cpath d='M11 9v6m10-6v6M8 15h16v3a8 8 0 0 1-16 0zm8 11v-3' stroke='%230B0F14' stroke-width='2.4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
-  <script>
-    try { const t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = JSON.parse(t); } catch (e) { /* storage unavailable */ }
-  </script>
+  <meta name="theme-color" content="#000000">
+  <script>document.documentElement.classList.add("js");</script>
   <link rel="stylesheet" href="/static/styles.css">
   <link rel="stylesheet" href="/static/site.css">
 </head>
-<body class="site docs">
-  <header class="site-nav">
+<body class="site">
+  <header class="site-nav scrolled" id="siteNav">
     <div class="wrap nav-inner">
-      <a class="brand" href="/" aria-label="PlugSec home"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">PlugSec</span><span class="muted brand-sub">Docs</span></a>
+      <a class="brand" href="/" aria-label="PlugSec home"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">PlugSec</span><span class="brand-sub">Docs</span></a>
       <nav class="nav-links" aria-label="Site">
         <a href="/#how">How it works</a>
-        <a href="/#features">Features</a>
+        <a href="/#security">Security</a>
         <a href="/docs" aria-current="page">Docs</a>
       </nav>
-      <button class="icon-btn theme-toggle" type="button" aria-label="Switch theme" title="Switch theme"></button>
-      <a class="btn primary sm" href="/#signin">Sign in</a>
+      <div class="nav-actions">
+        <a class="b b-ghost sm" href="/login">Sign in</a>
+        <a class="b b-white sm" href="#quick-start">Get started</a>
+      </div>
     </div>
   </header>
 
+  <div class="docs-shell">
   <div class="wrap docs-layout">
     <aside class="docs-side">
       <label class="docs-picker"><span class="sr-only">Topic</span><select id="docsPicker" aria-label="Topic"></select></label>
@@ -75,7 +77,7 @@
         <h1>Quick start</h1>
         <p class="lede">You need Python 3.11 or newer, on Windows or macOS.</p>
         <h2>1. Install and run</h2>
-        <pre class="code" data-copyable>python -m venv .venv
+        <pre class="code" data-copyable data-name="terminal">python -m venv .venv
 .venv\Scripts\activate          # macOS / Linux: source .venv/bin/activate
 pip install -r requirements.txt
 python run_all.py</pre>
@@ -87,7 +89,7 @@ python run_all.py</pre>
         </ul>
         <h2>2. Add your API keys</h2>
         <p>Fill in the keys for the tools you use in <code>.env</code>. A connection without its keys shows <b>Not configured</b> and never runs.</p>
-        <pre class="code" data-copyable>github_token=     GITHUB_OWNER=     GITHUB_REPO=
+        <pre class="code" data-copyable data-name=".env">github_token=     GITHUB_OWNER=     GITHUB_REPO=
 okta_token=       OKTA_DOMAIN=integrator-1234567.okta.com
 jira_email=       jira_token=       JIRA_DOMAIN=yourteam.atlassian.net
 nvd_api_key=      # optional</pre>
@@ -118,7 +120,7 @@ nvd_api_key=      # optional</pre>
         <p>A live YAML panel stays in sync with the form; you can edit either side.</p>
         <h2>Example: CISA KEV</h2>
         <p>The CISA Known Exploited Vulnerabilities feed is public JSON: no login, no paging.</p>
-        <pre class="code" data-copyable>name: cisa_kev
+        <pre class="code" data-copyable data-name="cisa_kev.yaml">name: cisa_kev
 display_name: "CISA KEV"
 enabled: true
 base_url: "https://www.cisa.gov"
@@ -188,7 +190,7 @@ streams:
             <tr><td><code>oauth2_client_credentials</code></td><td><code>token_url</code>, <code>client_id</code>, <code>client_secret</code></td><td>Tokens are fetched, cached and refreshed automatically.</td></tr>
           </tbody></table></div>
         <p>Secret fields must be a reference such as <code>${OKTA_TOKEN}</code>. A pasted secret is rejected.</p>
-        <pre class="code" data-copyable>auth: { type: api_key, header: Authorization, prefix: "SSWS ", api_key: "${okta_token}" }</pre>
+        <pre class="code" data-copyable data-name="okta.yaml">auth: { type: api_key, header: Authorization, prefix: "SSWS ", api_key: "${okta_token}" }</pre>
         <h2>Pagination types</h2>
         <div class="table-scroll"><table class="doc-table">
           <thead><tr><th>Type</th><th>Fields</th><th>Stops when</th></tr></thead>
@@ -215,7 +217,7 @@ streams:
             <tr><td><code>timeout_seconds</code></td><td>Per request, default 15.</td></tr>
           </tbody></table></div>
         <h2>Mapping and transforms</h2>
-        <pre class="code" data-copyable>mapping:
+        <pre class="code" data-copyable data-name="mapping.yaml">mapping:
   id: uuid                                   # plain path
   user: actor.alternateId                    # nested value
   name: "join(' ', [profile.firstName || '', profile.lastName || ''])"   # combine fields
@@ -339,7 +341,7 @@ transforms:
         <h1>FAQ</h1>
         <h2>What if an API is unusual?</h2>
         <p>Most APIs fit the config options. For the rare case that does not, an admin can add a small plugin: a class with <code>process(records, config)</code> that runs on the raw records before mapping, referenced as <code>custom_step</code>.</p>
-        <pre class="code" data-copyable>custom_step: "integration_platform.plugins.example_step.KevSeverity"</pre>
+        <pre class="code" data-copyable data-name="cisa_kev.yaml">custom_step: "integration_platform.plugins.example_step.KevSeverity"</pre>
         <h2>Where is data stored?</h2>
         <p>In one SQLite file, <code>data/platform.db</code>. The tables <code>users</code>, <code>devices</code> and <code>events</code> hold the common schema; others hold runs, quarantined records, sync state, the encrypted secrets, actions and the audit log.</p>
         <h2>Does AI change data?</h2>
@@ -352,10 +354,13 @@ transforms:
     </main>
   </div>
 
+  </div>
+
   <footer class="site-footer">
     <div class="wrap footer-inner">
-      <span>Built for CyberForge 2026 · Mitigata</span>
-      <a class="link" href="/">Home</a>
+      <a class="brand" href="/" aria-label="PlugSec home"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">PlugSec</span></a>
+      <nav class="footer-links" aria-label="Footer"><a href="/docs">Docs</a><a href="/login">Sign in</a></nav>
+      <span>© 2026 PlugSec</span>
     </div>
   </footer>
   <script src="/static/site.js"></script>

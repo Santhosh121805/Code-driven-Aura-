@@ -1,124 +1,415 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PlugSec · Connect any security tool with config, not code</title>
-  <meta name="description" content="One engine for login, paging, retries and mapping. Every tool lands in one common format: users, devices and events.">
+  <meta name="description" content="Config-driven security integrations. One engine for login, paging, retries and mapping; every tool lands in one format: users, devices and events.">
+  <meta name="theme-color" content="#000000">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232DD4BF'/%3E%3Cpath d='M11 9v6m10-6v6M8 15h16v3a8 8 0 0 1-16 0zm8 11v-3' stroke='%230B0F14' stroke-width='2.4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
-  <script>
-    try { const t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = JSON.parse(t); } catch (e) { /* storage unavailable */ }
-  </script>
+  <script>document.documentElement.classList.add("js");</script>
   <link rel="stylesheet" href="/static/styles.css">
   <link rel="stylesheet" href="/static/site.css">
 </head>
 <body class="site">
-  <header class="site-nav">
+  <header class="site-nav" id="siteNav">
     <div class="wrap nav-inner">
       <a class="brand" href="/" aria-label="PlugSec home"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">PlugSec</span></a>
       <nav class="nav-links" aria-label="Site">
         <a href="#how">How it works</a>
-        <a href="#features">Features</a>
+        <a href="#security">Security</a>
         <a href="/docs">Docs</a>
       </nav>
-      <button class="icon-btn theme-toggle" type="button" aria-label="Switch theme" title="Switch theme"></button>
-      <a class="btn primary sm" href="#signin" data-focus-signin>Sign in</a>
+      <div class="nav-actions">
+        <a class="b b-ghost sm" href="/login" data-open-signin>Sign in</a>
+        <a class="b b-white sm" href="/docs#quick-start">Get started</a>
+      </div>
     </div>
   </header>
 
   <main>
-    <section class="hero wrap">
-      <div class="hero-copy">
-        <h1>Connect any security tool with config, not code</h1>
-        <p class="lede">One engine for login, paging, retries and mapping. Every tool lands in one common format: users, devices and events.</p>
-        <div class="hero-actions">
-          <a class="btn primary" href="#signin" data-focus-signin>Sign in</a>
-          <a class="btn secondary" href="/docs">Read the docs</a>
-        </div>
-      </div>
-
-      <form class="card signin" id="signin" autocomplete="on" novalidate aria-labelledby="signinTitle">
-        <h2 id="signinTitle">Sign in</h2>
-        <div class="role-switch" role="radiogroup" aria-label="Account type">
-          <button type="button" role="radio" data-role="admin" aria-checked="true">Admin</button>
-          <button type="button" role="radio" data-role="analyst" aria-checked="false">Analyst</button>
-          <button type="button" role="radio" data-role="viewer" aria-checked="false">Viewer</button>
-        </div>
-        <p class="role-desc muted sm" id="roleDesc">Manage integrations, secrets, AI mapping</p>
-        <label class="field"><span class="label">Username</span>
-          <input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required placeholder="e.g. admin"></label>
-        <label class="field"><span class="label">Password</span>
-          <span class="pw">
-            <input id="password" name="password" type="password" autocomplete="current-password" required>
-            <button class="icon-btn" type="button" id="pwToggle" aria-label="Show password" aria-pressed="false"></button>
-          </span></label>
-        <div class="field-error" id="signinError" role="alert" aria-live="polite"></div>
-        <button class="btn primary block" type="submit" id="signinBtn"><span class="spinner" aria-hidden="true"></span><span class="label-text">Sign in</span></button>
-        <p class="muted xs demo-hint hidden" id="demoHint">Demo accounts are configured in .env</p>
-        <p class="muted xs">Your role comes from your account, not from the tab you pick.</p>
-      </form>
-    </section>
-
-    <section class="band" id="how" aria-labelledby="howTitle">
+    <!-- 1. Hero -->
+    <section class="hero">
       <div class="wrap">
-        <h2 class="section-title-lg" id="howTitle">How it works</h2>
-        <ol class="steps">
-          <li><span class="step-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8m-8 4h5"/></svg></span>
-            <b>Describe the tool</b><span>Write a short config, or fill in the web form.</span></li>
-          <li><span class="step-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/><path d="M19 15l.8 1.7 1.7.8-1.7.8L19 20l-.8-1.7-1.7-.8 1.7-.8z"/></svg></span>
-            <b>Map the fields</b><span>AI suggests, code verifies every path, an admin approves.</span></li>
-          <li><span class="step-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/></svg></span>
-            <b>One engine runs it</b><span>Fetches, pages, retries and normalises on a schedule.</span></li>
-          <li><span class="step-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg></span>
-            <b>Everything in one place</b><span>Users, devices and events, with health and alerts.</span></li>
-        </ol>
+        <span class="eyebrow reveal"><i></i>Config-driven security integrations</span>
+        <h1 class="display reveal">Connect any security tool with config, not code</h1>
+        <p class="sub reveal">One engine for login, paging, retries and mapping. Every tool lands in one format: users, devices and events.</p>
+        <div class="hero-actions reveal">
+          <a class="b b-white" href="/login" data-open-signin>Sign in</a>
+          <a class="b b-ghost" href="/docs">Read the docs</a>
+        </div>
+        <div class="logo-tile reveal" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 3v5m8-5v5M5 8h14v3a7 7 0 0 1-14 0zm7 10v3"/></svg></div>
       </div>
     </section>
 
-    <section class="wrap section" id="features" aria-labelledby="featuresTitle">
-      <h2 class="section-title-lg" id="featuresTitle">Features</h2>
-      <div class="feature-grid">
-        <article class="card feature"><span class="step-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 7-5 5 5 5m8-10 5 5-5 5"/></svg></span>
-          <h3>Config, not code</h3><p>A new tool is a YAML file or a web form. No restart, no deploy.</p></article>
-        <article class="card feature"><span class="step-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></span>
-          <h3>One common schema</h3><p>Every source lands as users, devices or events, in one store.</p></article>
-        <article class="card feature"><span class="step-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>
-          <h3>Safe secrets</h3><p>Encrypted vault; never in config, logs or Git.</p></article>
-        <article class="card feature"><span class="step-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg></span>
-          <h3>Reliable by default</h3><p>Retries after 1, 2 and 4 s, honours Retry-After, quarantines bad records.</p></article>
-        <article class="card feature"><span class="step-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h4l3-8 4 16 3-8h2"/></svg></span>
-          <h3>Visible health and alerts</h3><p>Status for every connection, with a Slack alert on repeated failure.</p></article>
-        <article class="card feature"><span class="step-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9m-3 3 3 3m-6 0 2 2"/></svg></span>
-          <h3>Token abuse detection</h3><p>An unusual jump in data volume pauses the connection and raises an alert.</p></article>
+    <!-- 2. Integrate -->
+    <section class="section" id="how">
+      <div class="wrap">
+        <div class="section-head reveal">
+          <h2 class="h2">Add a tool in minutes</h2>
+          <p class="sub">Each connection is one YAML file. These are the real configs PlugSec runs, with secrets referenced by name.</p>
+        </div>
+        <div class="reveal">
+          <div class="tabs" role="tablist" aria-label="Example configs" id="codeTabs">
+            <button role="tab" aria-selected="true" aria-controls="pane-github" id="tab-github" data-pane="github">GitHub</button>
+            <button role="tab" aria-selected="false" aria-controls="pane-okta" id="tab-okta" data-pane="okta">Okta</button>
+            <button role="tab" aria-selected="false" aria-controls="pane-jira" id="tab-jira" data-pane="jira">Jira</button>
+            <button role="tab" aria-selected="false" aria-controls="pane-nvd" id="tab-nvd" data-pane="nvd">NVD</button>
+            <button role="tab" aria-selected="false" aria-controls="pane-kev" id="tab-kev" data-pane="kev">CISA KEV</button>
+          </div>
+          <div class="code-panes">
+            <div class="pane" role="tabpanel" id="pane-github" aria-labelledby="tab-github">
+              <div class="window"><div class="window-bar"><span class="dots"><i></i><i></i><i></i></span><span class="file-tab">github.yaml</span><span class="spacer"></span><button class="copy" type="button" data-copy-target>Copy</button></div>
+                <pre class="code-body yaml" data-file="configs/integrations/github.yaml"># REAL source: GitHub REST API. Login: Bearer token (fine-grained PAT, read-only). Paging: Link header with page numbers.
+name: github
+display_name: "GitHub"
+enabled: true
+base_url: "https://api.github.com"
+auth: { type: bearer, token: "${github_token}" }
+scopes: ["metadata:read", "dependabot_alerts:read"]   # fine-grained PAT permissions (read-only)
+headers:
+  Accept: "application/vnd.github+json"
+  X-GitHub-Api-Version: "2022-11-28"
+schedule_seconds: 900
+rate_limit: { reset_header: "x-ratelimit-reset", remaining_header: "x-ratelimit-remaining", min_remaining: 1 }
+streams:
+  - name: me
+    entity: user
+    endpoint: "/user"
+    mapping: { id: "id", name: "name || login", email: "email", status: "'active'" }
+  - name: collaborators
+    entity: user
+    endpoint: "/repos/${GITHUB_OWNER}/${GITHUB_REPO}/collaborators"
+    params: { per_page: 100 }
+    pagination: { type: link, max_pages: 10 }
+    mapping: { id: "id", name: "login", email: "email", status: "role_name" }
+  - name: org_members          # only when GITHUB_ORG is set
+    entity: user
+    requires_env: ["GITHUB_ORG"]
+    endpoint: "/orgs/${GITHUB_ORG}/members"
+    params: { per_page: 100 }
+    pagination: { type: link, max_pages: 10 }
+    mapping: { id: "id", name: "login", status: "'member'" }
+  - name: dependabot_alerts
+    entity: event
+    endpoint: "/repos/${GITHUB_OWNER}/${GITHUB_REPO}/dependabot/alerts"
+    params: { per_page: 100, state: "open" }
+    pagination: { type: link, max_pages: 10 }
+    mapping:
+      id: "join('-', ['dependabot', to_string(number)])"
+      type: "'dependabot_alert'"
+      severity: "security_advisory.severity"
+      timestamp: "updated_at"
+      description: "join('', [security_advisory.summary, ' (', dependency.package.name, ')'])"
+  - name: repo_events          # used only when Dependabot alerts are not available (HTTP 403/404)
+    entity: event
+    fallback_for: dependabot_alerts
+    endpoint: "/repos/${GITHUB_OWNER}/${GITHUB_REPO}/events"
+    params: { per_page: 100 }
+    pagination: { type: link, max_pages: 3 }
+    mapping:
+      id: "id"
+      type: "type"
+      timestamp: "created_at"
+      description: "join(' ', [actor.login, type, repo.name])"
+      user: "actor.login"</pre></div>
+              <div class="chips"><span class="chip-h"><b>Login</b>Bearer token</span><span class="chip-h"><b>Paging</b>Link header</span></div>
+            </div>
+            <div class="pane" role="tabpanel" id="pane-okta" aria-labelledby="tab-okta" hidden>
+              <div class="window"><div class="window-bar"><span class="dots"><i></i><i></i><i></i></span><span class="file-tab">okta.yaml</span><span class="spacer"></span><button class="copy" type="button" data-copy-target>Copy</button></div>
+                <pre class="code-body yaml" data-file="configs/integrations/okta.yaml"># REAL source: Okta Integrator Free Plan. Login: API token header ("SSWS &lt;token&gt;"). Paging: Link header with an `after` cursor.
+name: okta
+display_name: "Okta"
+enabled: true
+base_url: "https://${OKTA_DOMAIN}"
+auth: { type: api_key, header: "Authorization", prefix: "SSWS ", api_key: "${okta_token}" }
+scopes: ["okta.users.read", "okta.logs.read"]   # create the token as a read-only admin
+schedule_seconds: 900
+rate_limit: { reset_header: "x-rate-limit-reset", remaining_header: "x-rate-limit-remaining", min_remaining: 2 }
+streams:
+  - name: users
+    entity: user
+    endpoint: "/api/v1/users"
+    params: { limit: 200 }
+    pagination: { type: link, max_pages: 20 }
+    mapping:
+      id: "id"
+      name: "join(' ', [profile.firstName || '', profile.lastName || ''])"
+      email: "profile.email"
+      status: "status"
+      last_login: "lastLogin"
+  - name: events
+    entity: event
+    endpoint: "/api/v1/logs"
+    params: { limit: 1000, since: "{{ last_sync }}" }   # incremental (B-1); first run uses Okta's default window
+    pagination: { type: link, max_pages: 5 }
+    mapping:
+      id: "uuid"
+      type: "eventType"
+      severity: "severity"
+      timestamp: "published"
+      description: "displayMessage"
+      user: "actor.alternateId"
+      src_ip: "client.ipAddress"
+    transforms:
+      severity_map: { DEBUG: info, INFO: info, WARN: medium, ERROR: high }</pre></div>
+              <div class="chips"><span class="chip-h"><b>Login</b>SSWS token</span><span class="chip-h"><b>Paging</b>Link cursor</span></div>
+            </div>
+            <div class="pane" role="tabpanel" id="pane-jira" aria-labelledby="tab-jira" hidden>
+              <div class="window"><div class="window-bar"><span class="dots"><i></i><i></i><i></i></span><span class="file-tab">jira.yaml</span><span class="spacer"></span><button class="copy" type="button" data-copy-target>Copy</button></div>
+                <pre class="code-body yaml" data-file="configs/integrations/jira.yaml"># REAL source: Jira Cloud (free plan). Login: Basic (email + API token). Paging: offset (startAt / maxResults).
+name: jira
+display_name: "Jira Cloud"
+enabled: true
+base_url: "https://${JIRA_DOMAIN}"
+auth: { type: basic, username: "${jira_email}", password: "${jira_token}" }
+scopes: ["read:jira-user", "read:jira-work"]
+schedule_seconds: 900
+streams:
+  - name: users
+    entity: user
+    endpoint: "/rest/api/3/users/search"
+    pagination: { type: offset, offset_param: startAt, limit_param: maxResults, limit: 50, max_pages: 20 }
+    mapping:
+      id: "accountId"
+      name: "displayName"
+      email: "emailAddress"
+      status: "active &amp;&amp; 'active' || 'inactive'"
+  - name: issues               # the classic /search endpoint is deprecated: /search/jql pages with nextPageToken
+    entity: event
+    endpoint: "/rest/api/3/search/jql"
+    params:
+      jql: "updated &gt;= -30d ORDER BY updated DESC"
+      fields: "summary,priority,issuetype,updated,status"
+      maxResults: 50
+    pagination: { type: cursor, cursor_path: "nextPageToken", cursor_param: "nextPageToken", max_pages: 5 }
+    records_path: "issues"
+    mapping:
+      id: "key"
+      type: "fields.issuetype.name"
+      severity: "fields.priority.name"
+      timestamp: "fields.updated"
+      description: "fields.summary"
+    transforms:
+      severity_map: { Highest: critical, High: high, Medium: medium, Low: low, Lowest: info }</pre></div>
+              <div class="chips"><span class="chip-h"><b>Login</b>Basic (email + token)</span><span class="chip-h"><b>Paging</b>Offset + token</span></div>
+            </div>
+            <div class="pane" role="tabpanel" id="pane-nvd" aria-labelledby="tab-nvd" hidden>
+              <div class="window"><div class="window-bar"><span class="dots"><i></i><i></i><i></i></span><span class="file-tab">nvd.yaml</span><span class="spacer"></span><button class="copy" type="button" data-copy-target>Copy</button></div>
+                <pre class="code-body yaml" data-file="configs/integrations/nvd.yaml"># REAL source: NVD CVE API 2.0. Login: optional API key header (works without one, at a lower rate limit).
+# Paging: offset via startIndex / resultsPerPage / totalResults. Incremental: lastModStartDate..lastModEndDate (max 120 days).
+name: nvd
+display_name: "NVD CVE API 2.0"
+enabled: true
+base_url: "https://services.nvd.nist.gov"
+auth: { type: api_key, header: "apiKey", api_key: "${nvd_api_key}", optional: true }
+schedule_seconds: 900
+retry: { max_retries: 3, backoff: exponential, base_seconds: 1 }
+# NVD without a key: 5 requests / rolling 30 s. Pace at 6 s; if a 429 still arrives (it says "Retry-After: 0"), wait out the window.
+rate_limit: { min_interval_seconds: 6, fallback_wait_seconds: 30 }
+exfiltration_guard: { enabled: false }   # public data, no token to abuse; NVD's daily bulk updates would be false positives
+streams:
+  - name: cves
+    entity: event
+    endpoint: "/rest/json/cves/2.0"
+    params:
+      lastModStartDate: "{{ (last_sync_dt or (now_dt - days(1))).strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
+      lastModEndDate: "{{ now_dt.strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
+    pagination: { type: offset, offset_param: startIndex, limit_param: resultsPerPage, limit: 1000, total_path: totalResults, max_pages: 5 }
+    records_path: "vulnerabilities"
+    timeout_seconds: 60
+    mapping:
+      id: "cve.id"
+      type: "'vulnerability'"
+      severity: "cve.metrics.cvssMetricV31[0].cvssData.baseSeverity || cve.metrics.cvssMetricV30[0].cvssData.baseSeverity || cve.metrics.cvssMetricV2[0].baseSeverity"
+      timestamp: "cve.lastModified"
+      description: "cve.descriptions[?lang=='en'] | [0].value"
+    transforms:
+      severity_map: { LOW: low, MEDIUM: medium, HIGH: high, CRITICAL: critical }
+      default_severity: info</pre></div>
+              <div class="chips"><span class="chip-h"><b>Login</b>Optional API key</span><span class="chip-h"><b>Paging</b>Offset · startIndex</span></div>
+            </div>
+            <div class="pane" role="tabpanel" id="pane-kev" aria-labelledby="tab-kev" hidden>
+              <div class="window"><div class="window-bar"><span class="dots"><i></i><i></i><i></i></span><span class="file-tab">cisa_kev.yaml</span><span class="spacer"></span><button class="copy" type="button" data-copy-target>Copy</button></div>
+                <pre class="code-body yaml" data-file="configs/examples/cisa_kev.yaml"># What the wizard produces when CISA KEV is added live in the demo (NOT preconfigured: copy into configs/integrations/
+# or add it via the Add Integration tab). No auth, no paging.
+name: cisa_kev
+display_name: "CISA KEV"
+enabled: true
+base_url: "https://www.cisa.gov"
+auth: { type: none }
+schedule_seconds: 900
+streams:
+  - name: kev
+    entity: event
+    endpoint: "/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+    records_path: "vulnerabilities"
+    timeout_seconds: 60
+    mapping:
+      id: "cveID"
+      type: "'vulnerability'"
+      timestamp: "dateAdded"
+      description: "vulnerabilityName"
+    transforms: { default_severity: high, time_format: iso8601 }</pre></div>
+              <div class="chips"><span class="chip-h"><b>Login</b>None (public feed)</span><span class="chip-h"><b>Paging</b>None</span></div>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
-    <section class="band" aria-labelledby="worksTitle">
-      <div class="wrap works">
-        <h2 class="section-title-lg" id="worksTitle">Works with</h2>
-        <ul class="name-chips">
-          <li>GitHub</li><li>Okta</li><li>Jira Cloud</li><li>NVD</li><li>CISA KEV</li><li>any REST API</li>
-        </ul>
-        <p class="muted sm">Bearer, API key, Basic, OAuth2 · page, cursor, link, offset</p>
+    <!-- 3. One engine -->
+    <section class="section">
+      <div class="wrap split">
+        <div class="section-head reveal">
+          <h2 class="h2">One engine, every connector</h2>
+          <p class="sub">Login, paging, rate limits and retries are written once and shared by every tool. A new connection inherits all of it.</p>
+          <ul class="points">
+            <li>Five login types and five paging styles</li>
+            <li>Waits for <code>Retry-After</code> instead of hammering an API</li>
+            <li>Bad records are set aside; the run carries on</li>
+          </ul>
+        </div>
+        <div class="window term reveal" id="term">
+          <div class="window-bar"><span class="dots"><i></i><i></i><i></i></span><span class="term-title">plugsec · run all</span>
+            <button class="b b-accent sm" type="button" id="termRun">Run</button></div>
+          <ol class="term-body" id="termBody" aria-live="polite"></ol>
+          <div class="term-foot"><span>Demo animation · sample output</span><span id="termStatus">idle</span></div>
+        </div>
       </div>
     </section>
 
-    <section class="wrap section" id="roles" aria-labelledby="rolesTitle">
-      <h2 class="section-title-lg" id="rolesTitle">Roles</h2>
-      <div class="role-grid">
-        <article class="card"><span class="pill role">Admin</span><p>Adds and changes integrations, manages secrets, approves AI mappings.</p></article>
-        <article class="card"><span class="pill role">Analyst</span><p>Sees every page and can run a connection on demand.</p></article>
-        <article class="card"><span class="pill role">Viewer</span><p>Read-only access to the dashboards.</p></article>
+    <!-- 4. Failure simulator -->
+    <section class="section">
+      <div class="wrap">
+        <div class="section-head center reveal">
+          <h2 class="h2">Built to fail safely</h2>
+          <p class="sub">Every connector handles the same four failures the same way. You can trigger each one from the dashboard.</p>
+        </div>
+        <div class="grid-4">
+          <article class="tile reveal"><span class="anim key"><svg viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9m-3 3 3 3m-6 0 2 2"/></svg></span>
+            <h3>Wrong key</h3><p><code>401</code>, shown as "Auth failed". No retry: a wrong key never gets better.</p></article>
+          <article class="tile reveal"><span class="anim wait"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
+            <h3>Rate limit</h3><p><code>429</code> waits exactly as long as <code>Retry-After</code> says, then carries on.</p></article>
+          <article class="tile reveal"><span class="anim net"><span class="bar"></span><span class="bar"></span><span class="bar"></span></span>
+            <h3>Network off</h3><p>Retries after 1 s, 2 s and 4 s, then the run is marked failed with a clear error.</p></article>
+          <article class="tile reveal"><span class="anim quar"><svg viewBox="0 0 24 24"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M12 12v4m0 3h.01"/></svg></span>
+            <h3>Bad record</h3><p>Quarantined with its reason. The good records are still stored.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. One format -->
+    <section class="section">
+      <div class="wrap split">
+        <div class="section-head reveal">
+          <h2 class="h2">One format for every tool</h2>
+          <p class="sub">Okta logs, GitHub alerts, Jira issues and CVE feeds all arrive as the same event: severity, type, time, who and where.</p>
+          <div class="schema-note"><span class="chip-h">users</span><span class="chip-h">devices</span><span class="chip-h">events</span><span class="chip-h">+ source · fetched_at</span></div>
+        </div>
+        <div class="feed reveal" aria-label="Sample normalised events (demo data)">
+          <ul class="feed-list" id="feedList"></ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6. Secure by default -->
+    <section class="section" id="security">
+      <div class="wrap">
+        <div class="section-head center reveal">
+          <h2 class="h2">Secure by default</h2>
+          <p class="sub">Integrations hold powerful tokens. PlugSec treats them that way.</p>
+        </div>
+        <div class="grid-3 reveal">
+          <div class="sec"><span class="ico"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span><h3>Encrypted vault</h3><p>Secrets are encrypted at rest with a master key.</p></div>
+          <div class="sec"><span class="ico"><svg viewBox="0 0 24 24"><path d="M8 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h2m8-16h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-2"/><path d="M9 12h6"/></svg></span><h3>Secrets by name only</h3><p>Configs say <code>${okta_token}</code>, never the value.</p></div>
+          <div class="sec"><span class="ico"><svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h10M3 18h14"/><path d="m17 11 4 4m0-4-4 4"/></svg></span><h3>Log masking</h3><p>Tokens and keys are masked in every log line.</p></div>
+          <div class="sec"><span class="ico"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/></svg></span><h3>Rotate-secret warnings</h3><p>Health flags secrets older than their limit.</p></div>
+          <div class="sec"><span class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m15 9-6 6m0-6 6 6"/></svg></span><h3>One-click revoke</h3><p>Disables the connection and wipes its secrets.</p></div>
+          <div class="sec"><span class="ico"><svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/></svg></span><h3>Token-abuse detection</h3><p>An abnormal jump in volume pauses the connection.</p></div>
+          <div class="sec"><span class="ico"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="m17 11 2 2 4-4"/></svg></span><h3>Role-based access</h3><p>Admin, analyst and viewer, enforced by the server.</p></div>
+          <div class="sec"><span class="ico"><svg viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8m-8 4h5"/></svg></span><h3>Audit log</h3><p>Every sign-in and change, with who and when.</p></div>
+          <div class="sec"><span class="ico"><svg viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></span><h3>Read-only scopes</h3><p>Write or admin scopes get a warning badge.</p></div>
+        </div>
+        <p class="fine reveal">Inspired by the 2025 Salesloft Drift integration-token breach.</p>
+      </div>
+    </section>
+
+    <!-- 7. Everything in one place -->
+    <section class="section">
+      <div class="wrap">
+        <div class="section-head center reveal">
+          <h2 class="h2">Everything in one place</h2>
+          <p class="sub">Health, records and alerts for every connection, in one dashboard.</p>
+        </div>
+        <div class="reveal">
+          <div class="tabs shot-tabs" role="tablist" aria-label="Dashboard screenshots" id="shotTabs">
+            <button role="tab" aria-selected="true" data-shot="overview">Overview</button>
+            <button role="tab" aria-selected="false" data-shot="integrations">Integrations</button>
+            <button role="tab" aria-selected="false" data-shot="events">Events</button>
+          </div>
+          <div class="shot-frame">
+            <img id="shotImg" src="/static/shots/overview.png" width="1440" height="900" alt="PlugSec dashboard: Overview page" loading="lazy" decoding="async">
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 8. Numbers -->
+    <section class="section">
+      <div class="wrap">
+        <div class="numbers reveal">
+          <div class="num"><b>4</b><span>real APIs</span></div>
+          <div class="num"><b>5</b><span>live connectors</span></div>
+          <div class="num"><b data-tests>197</b><span>automated tests</span></div>
+          <div class="num"><b>3</b><span>roles</span></div>
+          <div class="num"><b>0</b><span>secrets in Git</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 9. CTA -->
+    <section class="cta">
+      <div class="wrap">
+        <h2 class="h2 reveal">Every tool. One format.<br>Available today.</h2>
+        <div class="hero-actions reveal">
+          <a class="b b-white" href="/login" data-open-signin>Sign in</a>
+          <a class="b b-ghost" href="/docs">Read the docs</a>
+        </div>
       </div>
     </section>
   </main>
 
   <footer class="site-footer">
     <div class="wrap footer-inner">
-      <span>Built for CyberForge 2026 · Mitigata</span>
-      <a class="link" href="/docs">Docs</a>
+      <a class="brand" href="/" aria-label="PlugSec home"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">PlugSec</span></a>
+      <nav class="footer-links" aria-label="Footer"><a href="/docs">Docs</a><a href="/login" data-open-signin>Sign in</a></nav>
+      <span>© 2026 PlugSec</span>
     </div>
   </footer>
+
+  <!-- Sign-in modal -->
+  <div class="modal" id="signinModal" aria-hidden="true">
+    <form class="signin" id="signin" autocomplete="on" novalidate role="dialog" aria-modal="true" aria-labelledby="signinTitle">
+      <button class="icon-btn close" type="button" id="signinClose" aria-label="Close"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      <h2 id="signinTitle">Sign in</h2>
+      <div class="role-switch" role="radiogroup" aria-label="Account type">
+        <button type="button" role="radio" data-role="admin" aria-checked="true">Admin</button>
+        <button type="button" role="radio" data-role="analyst" aria-checked="false">Analyst</button>
+        <button type="button" role="radio" data-role="viewer" aria-checked="false">Viewer</button>
+      </div>
+      <p class="role-desc muted sm" id="roleDesc">Manage integrations, secrets, AI mapping</p>
+      <label class="field"><span class="label">Username</span>
+        <input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required placeholder="e.g. admin"></label>
+      <label class="field"><span class="label">Password</span>
+        <span class="pw"><input id="password" name="password" type="password" autocomplete="current-password" required>
+          <button class="icon-btn" type="button" id="pwToggle" aria-label="Show password" aria-pressed="false"></button></span></label>
+      <div class="field-error" id="signinError" role="alert" aria-live="polite"></div>
+      <button class="b b-white" type="submit" id="signinBtn"><span class="spinner" aria-hidden="true"></span><span class="label-text">Sign in</span></button>
+      <p class="xs demo-hint hidden" id="demoHint">Demo accounts are configured in .env</p>
+      <p class="xs">Your role comes from your account, not from the tab you pick.</p>
+    </form>
+  </div>
   <script src="/static/site.js"></script>
 </body>
 </html>

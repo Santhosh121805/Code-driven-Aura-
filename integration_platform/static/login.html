@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · PlugSec</title>
+  <meta name="theme-color" content="#000000">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232DD4BF'/%3E%3Cpath d='M11 9v6m10-6v6M8 15h16v3a8 8 0 0 1-16 0zm8 11v-3' stroke='%230B0F14' stroke-width='2.4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+  <script>document.documentElement.classList.add("js");</script>
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/site.css">
+</head>
+<body class="site">
+  <header class="site-nav scrolled" id="siteNav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="/" aria-label="PlugSec home"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">PlugSec</span></a>
+      <nav class="nav-links" aria-label="Site">
+        <a href="/#how">How it works</a>
+        <a href="/#security">Security</a>
+        <a href="/docs">Docs</a>
+      </nav>
+      <div class="nav-actions"><a class="b b-white sm" href="/docs#quick-start">Get started</a></div>
+    </div>
+  </header>
+
+  <main class="login-page">
+    <form class="signin" id="signin" autocomplete="on" novalidate aria-labelledby="signinTitle">
+      <h2 id="signinTitle">Sign in</h2>
+      <div class="role-switch" role="radiogroup" aria-label="Account type">
+        <button type="button" role="radio" data-role="admin" aria-checked="true">Admin</button>
+        <button type="button" role="radio" data-role="analyst" aria-checked="false">Analyst</button>
+        <button type="button" role="radio" data-role="viewer" aria-checked="false">Viewer</button>
+      </div>
+      <p class="role-desc muted sm" id="roleDesc">Manage integrations, secrets, AI mapping</p>
+      <label class="field"><span class="label">Username</span>
+        <input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required placeholder="e.g. admin"></label>
+      <label class="field"><span class="label">Password</span>
+        <span class="pw"><input id="password" name="password" type="password" autocomplete="current-password" required>
+          <button class="icon-btn" type="button" id="pwToggle" aria-label="Show password" aria-pressed="false"></button></span></label>
+      <div class="field-error" id="signinError" role="alert" aria-live="polite"></div>
+      <button class="b b-white" type="submit" id="signinBtn"><span class="spinner" aria-hidden="true"></span><span class="label-text">Sign in</span></button>
+      <p class="xs demo-hint hidden" id="demoHint">Demo accounts are configured in .env</p>
+      <p class="xs">Your role comes from your account, not from the tab you pick.</p>
+    </form>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <a class="brand" href="/" aria-label="PlugSec home"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">PlugSec</span></a>
+      <nav class="footer-links" aria-label="Footer"><a href="/docs">Docs</a><a href="/login">Sign in</a></nav>
+      <span>© 2026 PlugSec</span>
+    </div>
+  </footer>
+  <script src="/static/site.js"></script>
+</body>
+</html>

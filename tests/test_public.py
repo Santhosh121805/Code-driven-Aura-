@@ -29,7 +29,7 @@ def test_public_pages_load_without_a_session():
     assert "Connect any security tool with config, not code" in c.get("/").text
     assert 'id="security"' in c.get("/docs").text
     login = c.get("/login")
-    assert login.status_code == 302 and login.headers["location"] == "/#signin"
+    assert login.status_code == 200 and 'id="signin"' in login.text
 
 
 def test_app_redirects_home_without_a_session_and_loads_with_one():
@@ -51,8 +51,9 @@ def test_protected_apis_return_401_without_a_session():
 
 
 def test_public_pages_call_only_public_endpoints_and_show_no_live_data():
-    for name in ("landing.html", "docs.html", "site.js"):
-        text = (STATIC / name).read_text(encoding="utf-8")
+    from integration_platform.embed_configs import BLOCK
+    for name in ("landing.html", "docs.html", "login.html", "site.js"):
+        text = BLOCK.sub("", (STATIC / name).read_text(encoding="utf-8"))  # embedded YAML shows third-party API paths as text
         calls = set(re.findall(r"/api/[a-z0-9_/{}-]+", text))
         assert calls <= PUBLIC_API_CALLS, (name, calls - PUBLIC_API_CALLS)
 
@@ -122,3 +123,28 @@ def test_sign_out_clears_the_session():
     assert c.get("/app").status_code == 200
     c.post("/api/auth/logout")
     assert c.get("/app").status_code == 302
+
+
+def test_home_page_shows_the_real_configs():
+    """The code tabs embed the real YAML at build time; re-run `python -m integration_platform.embed_configs` after a config change."""
+    from integration_platform.embed_configs import config_text, embedded_files
+    page = (STATIC / "landing.html").read_text(encoding="utf-8")
+    files = embedded_files(page)
+    assert set(files) == {"configs/integrations/github.yaml", "configs/integrations/okta.yaml", "configs/integrations/jira.yaml",
+                          "configs/integrations/nvd.yaml", "configs/examples/cisa_kev.yaml"}
+    for rel, text in files.items():
+        assert text == config_text(rel), f"{rel} is out of date on the home page: run python -m integration_platform.embed_configs"
+        assert "${" in text or "type: none" in text  # secrets only by name
+
+
+def test_public_pages_do_not_mention_the_event_or_organiser():
+    for name in ("landing.html", "docs.html", "login.html", "site.js", "site.css"):
+        text = (STATIC / name).read_text(encoding="utf-8").lower()
+        assert "mitigata" not in text and "cyberforge" not in text, name
+
+
+def test_dashboard_screenshots_are_local_files():
+    page = client().get("/").text
+    for shot in ("overview", "integrations", "events"):
+        assert (STATIC / "shots" / f"{shot}.png").stat().st_size > 10_000
+    assert "/static/shots/overview.png" in page and "http" not in page.split('id="shotImg"')[1].split(">")[0]

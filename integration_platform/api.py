@@ -308,8 +308,9 @@ def landing() -> FileResponse:
 
 
 @app.get("/login", include_in_schema=False)
-def login_page() -> RedirectResponse:
-    return RedirectResponse("/#signin", status_code=302)
+def login_page() -> FileResponse:
+    """Full-page sign-in (the home page opens the same card as a modal)."""
+    return FileResponse(STATIC / "login.html", headers=NO_CACHE)
 
 
 @app.get("/docs", include_in_schema=False)
