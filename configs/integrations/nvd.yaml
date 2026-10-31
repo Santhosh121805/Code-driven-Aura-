@@ -7,7 +7,8 @@ base_url: "https://services.nvd.nist.gov"
 auth: { type: api_key, header: "apiKey", api_key: "${nvd_api_key}", optional: true }
 schedule_seconds: 900
 retry: { max_retries: 3, backoff: exponential, base_seconds: 1 }
-rate_limit: { min_interval_seconds: 6 }   # NVD best practice without an API key (5 requests / 30 s)
+# NVD without a key: 5 requests / rolling 30 s. Pace at 6 s; if a 429 still arrives (it says "Retry-After: 0"), wait out the window.
+rate_limit: { min_interval_seconds: 6, fallback_wait_seconds: 30 }
 exfiltration_guard: { enabled: false }   # public data, no token to abuse; NVD's daily bulk updates would be false positives
 streams:
   - name: cves

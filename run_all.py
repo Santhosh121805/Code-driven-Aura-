@@ -39,6 +39,15 @@ def ensure_env_file() -> None:
     legacy = {"JIRA_USER", "JIRA_TOKEN", "OKTA_CLIENT_ID", "OKTA_CLIENT_SECRET", "ACME_FW_API_KEY", "AWS_CLOUDTRAIL_TOKEN"}
     lines = env_file.read_text(encoding="utf-8").splitlines()
     kept = [line for line in lines if line.split("=", 1)[0].strip() not in legacy or line.lstrip().startswith("#")]
+    renames = {"ACME_FW_API_KEY": "MOCK_FIREWALL_API_KEY", "AWS_CLOUDTRAIL_TOKEN": "MOCK_CLOUDTRAIL_TOKEN"}
+    for i, line in enumerate(kept):
+        if line.startswith("SECRET_AGE_OVERRIDES="):
+            for old, new in renames.items():
+                line = line.replace(old, new)
+            kept[i] = line
+    if kept != lines and len(kept) == len(lines):
+        env_file.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        print("Updated SECRET_AGE_OVERRIDES in .env to the renamed MOCK_* secret names.")
     if len(kept) != len(lines):
         env_file.write_text("\n".join(kept) + "\n", encoding="utf-8")
         print(f"Removed {len(lines) - len(kept)} obsolete mock setting(s) from .env (renamed to MOCK_*).")

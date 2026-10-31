@@ -66,7 +66,12 @@ def import_secrets(refs: list[str]) -> None:
         log.info("encrypted %d secret(s) into the vault: %s", len(imported), ", ".join(imported))
 
 
+LEGACY_SECRET_NAMES = ("JIRA_USER", "JIRA_TOKEN", "OKTA_CLIENT_ID", "OKTA_CLIENT_SECRET", "ACME_FW_API_KEY", "AWS_CLOUDTRAIL_TOKEN")
+
+
 def bootstrap_secrets() -> None:
+    for name in LEGACY_SECRET_NAMES:  # mock credentials renamed to MOCK_*: drop their orphaned encrypted copies
+        state.db.delete_secret(name)
     configs = list(load_integration_files()[0].values()) + list(load_action_files()[0].values())
     import_secrets(sorted({ref for cfg in configs for ref in secret_refs(cfg)}))
 
@@ -519,6 +524,8 @@ async def demo_bulk_export(body: DemoIn | None = None) -> dict[str, Any]:
 async def demo_reset() -> dict[str, Any]:
     state.db.delete_revoked_secrets()  # revoked demo secrets come back from .env
     bootstrap_secrets()
+    for name, days in parse_age_overrides(os.environ.get("SECRET_AGE_OVERRIDES")).items():
+        state.vault.set_age(name, days)  # restore the demo's "Rotate secret" warning
     await demo.reset_mocks(state.registry)
     removed = state.registry.reset_demo()
     jira_cleared = False

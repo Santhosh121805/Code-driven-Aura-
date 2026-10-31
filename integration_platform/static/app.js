@@ -497,7 +497,16 @@ function yamlLines(obj, depth) {
       else { out.push(`${pad}${yKey(k)}:`); out.push(...yamlLines(v, depth + 1)); }
     } else if (Array.isArray(v)) {
       if (!v.length) out.push(`${pad}${yKey(k)}: []`);
-      else { out.push(`${pad}${yKey(k)}:`); v.forEach((x) => out.push(`${pad}  - ${isObj(x) || Array.isArray(x) ? JSON.stringify(x) : yScalar(x)}`)); }
+      else {
+        out.push(`${pad}${yKey(k)}:`);
+        v.forEach((x) => {
+          if (isObj(x) && Object.keys(x).length) {
+            // block style: "- first: value" then the other keys aligned under it (e.g. streams)
+            const inner = yamlLines(x, depth + 2);
+            out.push(`${pad}  - ${inner[0].trimStart()}`, ...inner.slice(1));
+          } else out.push(`${pad}  - ${isObj(x) || Array.isArray(x) ? JSON.stringify(x) : yScalar(x)}`);
+        });
+      }
     } else out.push(`${pad}${yKey(k)}: ${yScalar(v)}`);
   }
   return out;

@@ -297,6 +297,12 @@ class Database:
         self._exec("INSERT INTO secrets (name, ciphertext, created_at, revoked_at) VALUES (?, NULL, ?, ?) "
                    "ON CONFLICT(name) DO UPDATE SET ciphertext = NULL, revoked_at = excluded.revoked_at", (name, at, at))
 
+    def set_secret_created(self, name: str, created_at: str) -> None:
+        self._exec("UPDATE secrets SET created_at = ? WHERE name = ?", (created_at, name))
+
+    def delete_secret(self, name: str) -> None:
+        self._exec("DELETE FROM secrets WHERE name = ?", (name,))
+
     def delete_revoked_secrets(self) -> None:
         self._exec("DELETE FROM secrets WHERE revoked_at IS NOT NULL")
 

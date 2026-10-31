@@ -115,6 +115,11 @@ class Vault:
         except (InvalidToken, AttributeError):
             return False
 
+    def set_age(self, name: str, days: int) -> None:
+        """Demo helper: backdate an existing secret so 'Rotate secret' shows (SECRET_AGE_OVERRIDES on Reset demo)."""
+        if self.db.get_secret(name):
+            self.db.set_secret_created(name, (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ"))
+
     def lookup(self, name: str) -> str | None:
         """Hook for config.resolve_env."""
         return self.get(name)

@@ -174,3 +174,22 @@ async def test_min_interval_paces_requests():
     sleep = SleepRecorder()
     records, _ = await fetch(cfg, transport, sleep)
     assert len(records) == 3 and len(sleep.delays) == 2 and all(5.5 <= d <= 6 for d in sleep.delays)
+
+
+async def test_retry_after_zero_like_nvd_never_hammers():
+    """Real NVD behaviour (keyless burst): HTTP 429 + Retry-After: 0. Wait at least the normal backoff instead."""
+    transport, calls = scripted([(429, {}, {"Retry-After": "0"}), (429, {}, {"Retry-After": "0"}), (200, PAGE)])
+    sleep = SleepRecorder()
+    _, stats = await fetch(fw(), transport, sleep)
+    assert sleep.delays == [1, 2] and calls["n"] == 3
+    assert stats.retry_log[0] == "HTTP 429: waited 1s due to exponential backoff (Retry-After said 0s)"
+
+
+async def test_retry_after_zero_with_known_window_waits_the_window():
+    """NVD config: fallback_wait_seconds 30 -> one 30 s wait, then success (no hammering inside the rolling window)."""
+    cfg = fw().model_copy(update={"rate_limit": fw().rate_limit.model_copy(update={"fallback_wait_seconds": 30})})
+    transport, calls = scripted([(429, {}, {"Retry-After": "0"}), (200, PAGE)])
+    sleep = SleepRecorder()
+    _, stats = await fetch(cfg, transport, sleep)
+    assert sleep.delays == [30] and calls["n"] == 2
+    assert stats.retry_log[0] == "HTTP 429: waited 30s due to the rate-limit window (Retry-After said 0s)"

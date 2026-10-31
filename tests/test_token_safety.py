@@ -215,3 +215,12 @@ async def test_revoke_disables_and_wipes_secret_even_if_env_has_it(registry, db,
     assert r["status"] == "error" and "revoked" in r["error"]
     vault.set("MOCK_CLOUDTRAIL_TOKEN", "rotated-token-value")  # storing a new secret re-enables use
     assert resolve_env("${MOCK_CLOUDTRAIL_TOKEN}") == "rotated-token-value"
+
+
+def test_reset_can_restore_demo_secret_age(vault):
+    vault.set("MOCK_FIREWALL_API_KEY", "k")
+    assert vault.info("MOCK_FIREWALL_API_KEY")["age_days"] == 0
+    vault.set_age("MOCK_FIREWALL_API_KEY", 95)
+    assert vault.info("MOCK_FIREWALL_API_KEY")["age_days"] == 95
+    vault.set_age("NOT_STORED", 95)  # no-op for unknown names
+    assert vault.info("NOT_STORED")["in_vault"] is False

@@ -215,6 +215,8 @@ class RateLimitSpec(_Model):
     max_wait_seconds: float = Field(default=120, ge=0, le=3600, description="Never sleep longer than this for one rate-limit wait")
     max_429_retries: int = Field(default=5, ge=0, le=20)
     min_interval_seconds: float = Field(default=0, ge=0, le=60, description="Pace requests: at least this long between calls (NVD asks for 6s without a key)")
+    fallback_wait_seconds: float = Field(default=0, ge=0, le=3600,
+                                         description="Wait this long after a 429 that carries no useful hint (e.g. NVD's 30 s rolling window)")
 
 
 class GuardSpec(_Model):

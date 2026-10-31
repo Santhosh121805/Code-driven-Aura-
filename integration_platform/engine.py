@@ -99,13 +99,22 @@ def _reset_seconds(resp: httpx.Response, rate: RateLimitSpec) -> float | None:
 
 def rate_limit_wait(resp: httpx.Response, rate: RateLimitSpec, retry: RetrySpec, attempt: int) -> tuple[float, str]:
     """How long to wait after a 429, and why: Retry-After > reset header > exponential backoff."""
+    backoff = retry.base_seconds * (2 ** attempt)
     seconds = retry_after_seconds(resp.headers.get("Retry-After"))
     if seconds is not None:
         reason = "Retry-After"
     elif (seconds := _reset_seconds(resp, rate)) is not None:
         reason = rate.reset_header or "reset header"
     else:
-        seconds, reason = retry.base_seconds * (2 ** attempt), "exponential backoff (no Retry-After)"
+        seconds, reason = backoff, "exponential backoff (no Retry-After)"
+    if seconds < backoff:
+        # e.g. NVD answers keyless bursts with "Retry-After: 0": never hammer. Use the API's known window if configured,
+        # otherwise at least the normal backoff.
+        hint = f"{reason} said {seconds:g}s" if reason == "Retry-After" else "no Retry-After"
+        if rate.fallback_wait_seconds:
+            seconds, reason = max(backoff, rate.fallback_wait_seconds), f"the rate-limit window ({hint})"
+        else:
+            seconds, reason = backoff, f"exponential backoff ({hint})"
     return min(round(seconds, 1), rate.max_wait_seconds), reason
 
 
