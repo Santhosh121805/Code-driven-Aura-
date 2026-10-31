@@ -97,6 +97,20 @@
           </div>
         </section>
 
+        <!-- Repositories -->
+        <section class="page" id="page-repositories">
+          <div class="kpis" id="repoKpis"></div>
+          <div class="filters">
+            <div class="search"><span class="ico" data-icon="search"></span><input id="rpSearch" type="search" placeholder="e.g. scanner, terraform, security" aria-label="Search repositories"></div>
+            <select id="rpLanguage" aria-label="Language"></select>
+            <select id="rpTopic" aria-label="Topic"></select>
+            <select id="rpVisibility" aria-label="Visibility"></select>
+            <button class="chip" id="rpCritical" aria-pressed="false">Has critical alerts</button>
+          </div>
+          <div class="muted sm" id="rpMeta"></div>
+          <div class="repo-grid" id="repoGrid"></div>
+        </section>
+
         <!-- Integrations -->
         <section class="page" id="page-integrations">
           <div class="page-bar"><span id="intSummary" class="muted"></span><a class="btn primary" href="#wizard" data-role="admin" id="addIntBtn"><span class="ico" data-icon="plus"></span>Add integration</a></div>

@@ -6,11 +6,11 @@ catalog:
   api_style: REST pull (Sophos Central)
   auth: OAuth2 client credentials (id.sophos.com) + X-Tenant-ID header
   paging: unverified (single page in the template)
-  endpoint: GET /common/v1/alerts (regional host from whoami)
+  endpoint: GET /common/v1/alerts + GET /endpoint/v1/endpoints (regional host from whoami)
   docs: https://developer.sophos.com
   verification: partial
   needs: []
-  notes: Tenant ID and regional API host come from a one-off GET /whoami/v1 call; put both in .env.
+  notes: Tenant ID and regional API host come from a one-off GET /whoami/v1 call; put both in .env. Two endpoints - alerts and the endpoint (device) inventory - share one OAuth2 login.
 template:
   name: sophos_intercept_x
   display_name: Sophos Intercept X
@@ -42,4 +42,15 @@ template:
         low: low
         medium: medium
         high: high
+  - name: endpoints
+    entity: device
+    endpoint: /endpoint/v1/endpoints
+    records_path: items
+    mapping:
+      id: id
+      hostname: hostname
+      ip: ipv4Addresses[0]
+      os: os.name
+      owner: associatedPerson.viaLogin
+      last_seen: lastSeenAt
   schedule_seconds: 900

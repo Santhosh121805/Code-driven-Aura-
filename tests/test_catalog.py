@@ -121,3 +121,12 @@ async def test_mock_lacework_wrong_secret_fails_at_login(db, lacework_env, monke
     r = await run_integration(validate_integration(BY_ID["lacework_forticnapp"]["template"]), db,
                               transport=httpx.ASGITransport(app=mock_lacework.app), sleep=no_sleep)
     assert r["status"] == "error" and "Authentication failed: HTTP 401" in r["error"] and "/api/v2/access/tokens" in r["error"]
+
+
+async def test_mock_fortigate_template_runs_both_endpoints(db, fortigate_env):
+    cfg = validate_integration(BY_ID["fortinet_fortigate"]["template"])
+    assert [s.name for s in cfg.streams] == ["event_logs", "devices"]  # "Use template" fills two endpoints
+    r = await run_integration(cfg, db, transport=httpx.ASGITransport(app=mock_fortigate.app), sleep=no_sleep)
+    assert r["status"] == "success" and [(s["name"], s["fetched"]) for s in r["streams"]] == [("event_logs", 7), ("devices", 3)]
+    devices, total = db.list_records("device", "fortinet_fortigate")
+    assert total == 3 and {d["os"] for d in devices} == {"Windows 11", "Windows 10", "Linux Ubuntu 22.04"}

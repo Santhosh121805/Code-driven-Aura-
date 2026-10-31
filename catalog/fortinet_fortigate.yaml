@@ -6,11 +6,11 @@ catalog:
   api_style: REST pull
   auth: 'API token (Authorization: Bearer)'
   paging: Offset (start / rows, total_lines)
-  endpoint: GET /api/v2/log/memory/event/system
+  endpoint: GET /api/v2/log/memory/event/system + GET /api/v2/monitor/user/device/query (device inventory)
   docs: https://docs.fortinet.com/document/fortigate/7.4.7/administration-guide/940602
   verification: partial
   needs: []
-  notes: Bearer token from Fortinet's admin guide; log path from a Fortinet community tip; start/rows/total_lines from community responses.
+  notes: Bearer token from Fortinet's admin guide; log path from a Fortinet community tip; start/rows/total_lines from community responses. Two endpoints - system event log and the device inventory (monitor API) - share one login.
 template:
   name: fortinet_fortigate
   display_name: Fortinet FortiGate
@@ -50,4 +50,15 @@ template:
         notice: low
         information: info
         debug: info
+  - name: devices
+    entity: device
+    endpoint: /api/v2/monitor/user/device/query
+    records_path: results
+    mapping:
+      id: mac
+      hostname: hostname
+      ip: ipv4_address
+      os: join(' ', [os_name, os_version])
+      owner: user
+      last_seen: last_seen
   schedule_seconds: 900

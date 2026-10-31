@@ -30,6 +30,21 @@ def record(i: int) -> dict:
     return rec
 
 
+DEVICES = [("00:1a:2b:3c:4d:01", "fin-laptop-01", "10.0.10.21", "Windows", "11", "priya"),
+           ("00:1a:2b:3c:4d:02", "hr-desktop-02", "10.0.10.22", "Windows", "10", "arjun"),
+           ("00:1a:2b:3c:4d:03", "build-srv-01", "10.0.20.5", "Linux", "Ubuntu 22.04", None)]
+
+
+@app.get("/api/v2/monitor/user/device/query")
+def device_query(authorization: str | None = Header(None)) -> dict:
+    """Device inventory (FortiOS monitor API shape: results list with mac, hostname, ipv4_address, os_name, ...)."""
+    if authorization != f"Bearer {TOKEN}":
+        raise HTTPException(401, "Unauthorized")
+    results = [{"mac": mac, "hostname": host, "ipv4_address": ip, "os_name": os_name, "os_version": ver, "last_seen": 1793448902 + i,
+                **({"user": user} if user else {})} for i, (mac, host, ip, os_name, ver, user) in enumerate(DEVICES)]
+    return {"http_method": "GET", "results": results, "vdom": "root", "path": "user", "name": "device", "status": "success"}
+
+
 @app.get("/api/v2/log/memory/event/system")
 def event_system(start: int = Query(0, ge=0), rows: int = Query(400, ge=1, le=1000), authorization: str | None = Header(None)) -> dict:
     if authorization != f"Bearer {TOKEN}":

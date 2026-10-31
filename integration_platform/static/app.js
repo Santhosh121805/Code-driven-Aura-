@@ -7,9 +7,11 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const ENTITY_FIELDS = {  // overwritten from /api/meta at boot (single source of truth is the server)
   user: ["id", "name", "email", "status", "last_login"],
   device: ["id", "hostname", "ip", "os", "owner", "last_seen"],
-  event: ["id", "type", "severity", "timestamp", "description", "host", "src_ip", "dst_ip", "user"],
+  event: ["id", "type", "severity", "timestamp", "description", "host", "src_ip", "dst_ip", "user", "resource"],
+  repository: ["id", "full_name", "url", "description", "summary", "summary_source", "topics", "primary_language", "languages", "visibility",
+    "is_fork", "is_archived", "default_branch", "stars", "forks", "open_issues", "created_at", "last_pushed_at", "dependabot_status"],
 };
-const TIME_FIELD = { user: "last_login", device: "last_seen", event: "timestamp" };
+const TIME_FIELD = { user: "last_login", device: "last_seen", event: "timestamp", repository: "last_pushed_at" };
 const SEVERITIES = ["info", "low", "medium", "high", "critical"];
 const ENV_REF = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
 const ROLE_RANK = { viewer: 0, analyst: 1, admin: 2 };
@@ -18,7 +20,7 @@ const fmtN = (n) => Number(n || 0).toLocaleString("en-US");
 const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : "");
 const copy = (o) => JSON.parse(JSON.stringify(o));
 
-const state = { page: "overview", me: null, meta: {}, integrations: [], names: {}, notifications: [], tick: 0, busy: false, repo: null, repoAt: 0 };
+const state = { page: "overview", me: null, meta: {}, integrations: [], names: {}, notifications: [], tick: 0, busy: false };
 
 /* ------------------------------------------------------------------ icons (inline SVG, offline) */
 const ICONS = {
@@ -44,6 +46,7 @@ const ICONS = {
   alert: '<circle cx="12" cy="12" r="9"/><path d="M12 8v5m0 3h.01"/>',
   catalog: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M17.5 14v7M14 17.5h7"/>',
   external: '<path d="M14 4h6v6M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/>',
+  repo: '<path d="M5 4.5A2.5 2.5 0 0 1 7.5 2H19v16H7.5A2.5 2.5 0 0 0 5 20.5z"/><path d="M5 20.5A2.5 2.5 0 0 0 7.5 23H19v-5M9 7h6"/>',
 };
 const svg = (name) => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ""}</svg>`;
 const icon = (name, cls = "ico") => `<span class="${cls}">${svg(name)}</span>`;
@@ -207,6 +210,7 @@ const NAV = [
   { page: "events", label: "Events", icon: "events", desc: "Every alert and event from every connected tool, in one common format." },
   { page: "users", label: "Users", icon: "users", desc: "Accounts from your identity and work tools, in one table." },
   { page: "devices", label: "Devices", icon: "devices", desc: "Hosts and endpoints reported by your tools." },
+  { page: "repositories", label: "Repositories", icon: "repo", desc: "Every repository the GitHub token can see: what it is, its languages and its open Dependabot alerts." },
   { page: "integrations", label: "Integrations", icon: "integrations", desc: "Connections to your security tools: health, last run and records pulled." },
   { page: "catalog", label: "Catalog", icon: "catalog", desc: "Tools customers use: what each API needs, and whether a ready template exists." },
   { page: "wizard", label: "Add integration", icon: "plus", role: "admin", desc: "Connect a new tool with a config file, not code." },
@@ -264,6 +268,7 @@ async function refresh(force = false) {
     else if (page === "events") await renderEvents();
     else if (page === "users") await renderUsers();
     else if (page === "devices") await renderDevices();
+    else if (page === "repositories") await renderRepositories();
     else if (page === "integrations") await renderIntegrations();
     else if (page === "actions") await renderActions();
     else if (page === "catalog") await renderCatalog(force);
@@ -331,7 +336,7 @@ async function renderOverview() {
 
   $("#connList").innerHTML = ints.map((i) => {
     const h = i.health, lr = h.last_run || {}, c = h.counts || {};
-    const total = (c.users || 0) + (c.devices || 0) + (c.events || 0);
+    const total = (c.users || 0) + (c.devices || 0) + (c.events || 0) + (c.repositories || 0);
     return `<a class="conn" href="#integrations" data-open-int="${esc(i.name)}"><span class="dot ${statusOf(h)[1]}" title="${esc(statusOf(h)[0])}"></span>
       <div style="min-width:0"><div class="conn-name">${esc(i.display_name)}</div><div class="conn-sub">${h.status === "not_configured" ? "Not configured" : `Last run ${esc(relTime(lr.finished_at))}`}</div></div>
       <span class="n">${fmtN(total)} records</span></a>`;
@@ -441,6 +446,88 @@ function recordDrawer(entity, r) {
     ${rawBlock(raw)}`);
 }
 
+/* ------------------------------------------------------------------ repositories */
+const rp = { q: "", language: "", topic: "", visibility: "", critical: false, items: [], data: null };
+const ALERT_SEVS = ["critical", "high", "medium", "low"];
+/** A small stable colour per language for the language bar (no external palette needed). */
+function langColour(name) {
+  let h = 0;
+  for (const ch of String(name)) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  return `hsl(${h} 55% 55%)`;
+}
+function langBar(languages, thin = true) {
+  const entries = Object.entries(languages || {});
+  if (!entries.length) return "";
+  return `<div class="lang-bar ${thin ? "" : "tall"}" role="img" aria-label="${esc(entries.map(([k, v]) => `${k} ${v.percent}%`).join(", "))}">${entries.map(([k, v]) =>
+    `<span style="width:${Math.max(v.percent, 0.5)}%;background:${langColour(k)}" title="${esc(`${k} ${v.percent}%`)}"></span>`).join("")}</div>`;
+}
+function alertPills(r) {
+  if (r.dependabot_status === "disabled") return '<span class="pill idle" title="Dependabot alerts are disabled for this repository"><i></i>Dependabot off</span>';
+  if (r.dependabot_status === "no access") return '<span class="pill idle" title="The token cannot read this repository\'s Dependabot alerts"><i></i>No alert access</span>';
+  const pills = ALERT_SEVS.filter((s) => r[`alerts_${s}`]).map((s) => `<span class="pill ${s}"><i></i>${fmtN(r[`alerts_${s}`])} ${s}</span>`).join("");
+  return pills || (r.dependabot_status === "enabled" ? '<span class="pill ok"><i></i>No open alerts</span>' : '<span class="muted sm">Dependabot not checked yet</span>');
+}
+function repoSummary(r) {
+  if (r.description) return `<p class="repo-desc">${esc(r.description)}</p>`;
+  if (r.summary) return `<p class="repo-desc">${esc(r.summary)} <span class="src-label">${r.summary_source === "AI" ? "AI summary" : "from README"}</span></p>`;
+  return '<p class="repo-desc muted">No description</p>';
+}
+const plural = (n, word) => `${fmtN(n)} ${word}${n === 1 ? "" : "s"}`;
+
+async function renderRepositories() {
+  const params = new URLSearchParams();
+  for (const k of ["q", "language", "topic", "visibility"]) if (rp[k]) params.set(k, rp[k]);
+  if (rp.critical) params.set("critical", "true");
+  const d = await api(`/api/repositories?${params}`);
+  rp.data = d;
+  rp.items = d.items;
+  const k = d.kpis;
+  $("#repoKpis").innerHTML = [
+    ["Repositories", fmtN(k.repositories), `${plural(k.alerts.critical + k.alerts.high + k.alerts.medium + k.alerts.low, "open Dependabot alert")}`],
+    ["With critical alerts", fmtN(k.with_critical), `${plural(k.alerts.critical, "critical alert")} · ${plural(k.alerts.high, "high")}`, "bad"],
+    ["Languages", fmtN(k.languages), "Across all repositories"],
+    ["Last updated", k.last_updated ? relTime(k.last_updated) : "-", k.last_updated ? fullTime(k.last_updated) : "Run the GitHub connection"],
+  ].map(([label, value, s, cls]) => `<div class="card kpi"><div class="label">${esc(label)}</div><div class="value ${cls && value !== "0" ? cls : ""}">${esc(value)}</div><div class="sub">${esc(s)}</div></div>`).join("");
+  const opts = (list, current, all) => [`<option value="">${all}</option>`, ...list.map((v) => `<option value="${esc(v)}" ${v === current ? "selected" : ""}>${esc(v)}</option>`)].join("");
+  $("#rpLanguage").innerHTML = opts(d.facets.languages, rp.language, "All languages");
+  $("#rpTopic").innerHTML = opts(d.facets.topics, rp.topic, "All topics");
+  $("#rpVisibility").innerHTML = opts(d.facets.visibility, rp.visibility, "Any visibility");
+  $("#rpCritical").classList.toggle("active", rp.critical);
+  $("#rpCritical").setAttribute("aria-pressed", String(rp.critical));
+  $("#rpMeta").textContent = d.total ? `Showing ${fmtN(d.shown)} of ${plural(d.total, "repository").replace("repositorys", "repositories")}` : "";
+  $("#repoGrid").innerHTML = d.items.map((r, i) => `<article class="card repo-card" data-i="${i}" tabindex="0" aria-label="${esc(r.full_name)}">
+      <div class="repo-head"><a class="repo-name" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer" title="Open on GitHub">${esc(r.full_name)}</a>
+        ${r.visibility ? `<span class="chip-sm vis-${esc(r.visibility)}">${esc(cap(r.visibility))}</span>` : ""}${r.is_fork ? '<span class="chip-sm">Fork</span>' : ""}${r.is_archived ? '<span class="chip-sm">Archived</span>' : ""}</div>
+      ${repoSummary(r)}
+      ${r.topics.length ? `<div class="repo-topics">${r.topics.slice(0, 6).map((t) => `<span class="topic">${esc(t)}</span>`).join("")}${r.topics.length > 6 ? `<span class="muted sm">+${r.topics.length - 6}</span>` : ""}</div>` : ""}
+      ${langBar(r.languages)}
+      <div class="repo-meta">${r.primary_language ? `<span><i class="lang-dot" style="background:${langColour(r.primary_language)}"></i>${esc(r.primary_language)}</span>` : ""}
+        <span title="Stars">★ ${fmtN(r.stars)}</span><span title="Forks">${fmtN(r.forks)} fork${r.forks === 1 ? "" : "s"}</span><span title="Open issues">${fmtN(r.open_issues)} open issue${r.open_issues === 1 ? "" : "s"}</span>
+        ${r.last_pushed_at ? `<span>Pushed ${timeHtml(r.last_pushed_at)}</span>` : ""}</div>
+      <div class="repo-alerts">${alertPills(r)}</div>
+    </article>`).join("")
+    || `<div class="card"><div class="empty"><b>${d.total ? "No matching repositories" : "No repositories yet"}</b>${d.total ? "Clear the search or a filter." : "Run the GitHub connection to list every repository the token can see."}</div></div>`;
+}
+
+async function repoDrawer(r) {
+  const alerts = await api(`/api/events?resource=${encodeURIComponent(r.full_name)}&limit=20`).catch(() => ({ items: [], total: 0 }));
+  const langs = Object.entries(r.languages || {});
+  openDrawer(`${sourceTag(r.source)} <span class="muted">Repository</span>`, r.full_name, `
+    ${repoSummary(r)}
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn secondary sm" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${icon("external")}Open on GitHub</a></div>
+    ${kvList([["Visibility", esc(cap(r.visibility || "-"))], ["Default branch", `<span class="mono">${esc(r.default_branch || "-")}</span>`],
+      ["Stars · forks · issues", `★ ${fmtN(r.stars)} · ${fmtN(r.forks)} · ${fmtN(r.open_issues)}`], ["Fork / archived", `${r.is_fork ? "Fork" : "Not a fork"} · ${r.is_archived ? "Archived" : "Active"}`],
+      ["Created", r.created_at ? esc(fullTime(r.created_at)) : "-"], ["Last push", r.last_pushed_at ? timeHtml(r.last_pushed_at) : "-"],
+      ["Topics", r.topics.map((t) => `<span class="topic">${esc(t)}</span>`).join(" ") || '<span class="muted">none</span>'],
+      ["Summary source", esc(r.description ? "Description" : r.summary ? (r.summary_source === "AI" ? "AI summary" : "README") : "-")],
+      ["Dependabot", esc(cap(r.dependabot_status || "not checked"))], ["Fetched", esc(fullTime(r.fetched_at))]])}
+    <div><div class="section-title">Languages</div>${langs.length ? `${langBar(r.languages, false)}<ul class="lang-list">${langs.map(([k, v]) =>
+      `<li><i class="lang-dot" style="background:${langColour(k)}"></i><span>${esc(k)}</span><span class="muted">${v.percent}%</span></li>`).join("")}</ul>` : '<div class="muted">No language data</div>'}</div>
+    <div><div class="section-title">Open Dependabot alerts ${alerts.total ? `<span class="muted">${fmtN(alerts.total)}</span>` : ""}</div>
+      <div class="repo-alerts" style="margin-bottom:8px">${alertPills(r)}</div>
+      ${alerts.items.length ? `<div class="runs">${alerts.items.map((e) => `<div class="run">${sevPill(e.severity)}<span>${esc(e.description)}</span><span class="muted sm">${timeHtml(e.timestamp)}</span></div>`).join("")}</div>` : ""}</div>`);
+}
+
 /* ------------------------------------------------------------------ integrations */
 function warningLine(i) {
   const h = i.health, lr = h.last_run || {};
@@ -457,22 +544,7 @@ function warningLine(i) {
   return null;
 }
 
-function repoSection() {
-  const r = state.repo;
-  if (!r || !r.configured) return "";
-  const dep = r.dependabot || {};
-  const sev = ["critical", "high", "medium", "low"].filter((s) => dep[s]).map((s) => `<span class="pill ${s}"><i></i>${fmtN(dep[s])} ${s}</span>`).join("");
-  return `<div class="repo"><div class="row"><span class="repo-name">${esc(r.full_name)}</span>${r.language ? `<span class="chip-sm">${esc(r.language)}</span>` : ""}</div>
-    <div class="muted">${esc(r.description || "No description")}</div>
-    ${(r.topics || []).length ? `<div class="row">${r.topics.map((t) => `<span class="chip-sm">${esc(t)}</span>`).join("")}</div>` : ""}
-    <div class="row"><span class="muted">Dependabot</span>${sev || '<span class="muted">no open alerts</span>'}</div></div>`;
-}
-
 async function renderIntegrations() {
-  if (state.integrations.some((i) => i.name === "github") && Date.now() - state.repoAt > 60e3) {
-    state.repoAt = Date.now();
-    try { state.repo = await api("/api/integrations/github/repo"); } catch { state.repo = null; }
-  }
   const ints = state.integrations;
   const count = (cls) => ints.filter((i) => statusOf(i.health)[1] === cls).length;
   const parts = [`${ints.length} connection${ints.length === 1 ? "" : "s"}`, `${ints.filter((i) => i.health.colour === "green").length} healthy`];
@@ -486,7 +558,10 @@ async function renderIntegrations() {
 
   $("#intGrid").innerHTML = ints.map((i) => {
     const h = i.health, lr = h.last_run || {}, c = h.counts || {};
-    const stats = ["users", "devices", "events"].filter((k) => c[k]).map((k) => `<div><b>${fmtN(c[k])}</b><span>${cap(k)}</span></div>`).join("");
+    const stats = ["repositories", "users", "devices", "events"].filter((k) => c[k]).map((k) => `<div><b>${fmtN(c[k])}</b><span>${cap(k)}</span></div>`).join("");
+    const nEp = (i.streams || []).length;
+    const reach = c.repositories ? `${plural(c.repositories, "repository").replace("repositorys", "repositories")} · ${plural(c.events || 0, "alert")} · ${plural(nEp, "endpoint")}` : plural(nEp, "endpoint");
+    const skipped = (i.streams || []).reduce((n, s) => n + (s.skipped || 0), 0);
     const pagings = [...new Set((i.streams || []).map((s) => s.pagination))];
     const paging = (pagings.length > 1 ? pagings.filter((p) => p !== "none") : pagings).map((p) => PAGING_LABEL[p] || p).join(" + ");
     const w = warningLine(i);
@@ -496,9 +571,9 @@ async function renderIntegrations() {
     return `<article class="card int-card" data-int="${esc(i.name)}" tabindex="0" aria-label="${esc(i.display_name)}">
       <div class="int-head"><span class="avatar">${esc(initials(i.display_name).slice(0, 2))}</span><span class="int-name">${esc(i.display_name)}</span>${statusPill(h)}</div>
       <div class="int-line">${esc(line)}</div>
+      <div class="int-line"><b>${esc(reach)}</b>${skipped ? ` · <span title="${esc((i.streams || []).filter((s) => s.skipped).map((s) => `${s.name}: ${Object.entries(s.skipped_reasons || {}).map(([k, n]) => `${n} × ${k}`).join("; ")}`).join("\n"))}">${plural(skipped, "item")} skipped</span>` : ""}</div>
       ${stats ? `<div class="int-stats">${stats}</div>` : ""}
       <div class="int-chips"><span class="chip-sm">${esc(AUTH_LABEL[i.auth_type] || i.auth_type)}</span><span class="chip-sm">${esc(paging || "No paging")}</span>${i.seeded ? "" : '<span class="chip-sm">Added live</span>'}</div>
-      ${i.name === "github" ? repoSection() : ""}
       ${w ? `<div class="int-warn ${w[0]}">${icon("alert")}<span class="cell-main" title="${esc(w[1])}">${esc(w[1])}</span>${w[2] ? `<button class="link sm" data-act="quarantine" data-name="${esc(i.name)}">View</button>` : ""}</div>` : ""}
       <div class="int-foot">
         ${h.status === "suspicious" ? gatedBtn("admin", "Review", `data-act="review" data-name="${esc(i.name)}"`, "btn primary sm")
@@ -577,12 +652,21 @@ async function integrationDrawer(name) {
       <span class="muted sm">${fmtN(r.records_fetched)} records · ${fmtN(r.records_new)} new${r.retries ? ` · ${r.retries} retr${r.retries === 1 ? "y" : "ies"}` : ""}${r.pages ? ` · ${r.pages} page${r.pages === 1 ? "" : "s"}` : ""}</span>
       ${r.error ? `<span class="err">${esc(r.error)}</span>` : ""}</div>`;
   }).join("");
-  const streams = (d.streams || []).map((s) => `<span class="mono">${esc(s.name)}</span> → ${esc(s.entity)} · ${esc(PAGING_LABEL[s.pagination] || s.pagination)}`).join("<br>");
+  const epCls = (st) => (!st ? "idle" : st === "ok" ? "ok" : st === "error" ? "bad" : "idle");
+  const endpoints = (d.streams || []).map((s) => `<tr><td><span class="mono">${esc(s.name)}</span><div class="muted sm mono" title="${esc(s.endpoint)}">${esc(s.endpoint)}</div>
+      ${s.for_each ? `<div class="muted sm">for each ${esc(s.for_each)} record${s.merge_into_parent ? " · merged" : ""}</div>` : ""}</td>
+      <td>${esc(entityLabel(s.entity))}</td>
+      <td><span class="pill ${epCls(s.last_status)}" title="${esc(s.last_status || "")}"><i></i>${esc(s.last_status === "ok" ? "OK" : s.last_status ? cap(String(s.last_status).split(":")[0]) : "Not run")}</span></td>
+      <td>${s.fetched == null ? '<span class="muted">-</span>' : `${fmtN(s.fetched)}<div class="muted sm">${fmtN(s.new)} new · ${fmtN(s.updated)} upd.</div>`}</td>
+      <td>${s.skipped ? `<span title="${esc(Object.entries(s.skipped_reasons || {}).map(([k, n]) => `${n} × ${k}`).join("\n"))}">${fmtN(s.skipped)} skipped</span>` : '<span class="muted">-</span>'}
+        ${s.error ? `<div class="err sm" title="${esc(s.error)}">${esc(s.error)}</div>` : ""}</td></tr>`).join("");
   openDrawer(`${statusPill(h)} <span>${esc(h.summary)}</span>`, d.display_name, `${guard}
     ${kvList([["Base URL", `<span class="mono">${esc(d.base_url)}</span>`], ["Schedule", `every ${d.schedule_seconds >= 60 ? `${d.schedule_seconds / 60} min` : `${d.schedule_seconds}s`}`],
       ["Auth", esc(AUTH_LABEL[d.auth_type] || d.auth_type)], ["Scopes", (d.scopes || []).map((s) => `<span class="chip-sm" style="margin:0 4px 4px 0;${(d.risky_scopes || []).includes(s) ? "color:var(--bad)" : ""}">${esc(s)}</span>`).join("") || '<span class="muted">-</span>'],
-      ["Streams", streams || "-"], ["Retries", `${fmtN(h.totals.retries)} in ${fmtN(h.totals.runs)} runs · ${fmtN(h.totals.errors)} failed`],
+      ["Retries", `${fmtN(h.totals.retries)} in ${fmtN(h.totals.runs)} runs · ${fmtN(h.totals.errors)} failed`],
       ["Secrets", (h.secrets || []).map((s) => `<span class="mono">${esc(s.name)}</span> <span class="muted sm">${s.revoked ? "revoked" : s.in_vault ? `in vault · ${s.age_days} d old` : "from .env"}</span>`).join("<br>") || '<span class="muted">none</span>']])}
+    <div><div class="section-title">Endpoints <span class="muted">${(d.streams || []).length}</span></div>
+      <div class="table-wrap"><table class="table ep-table"><thead><tr><th>Endpoint</th><th>Fills</th><th>Last status</th><th>Records</th><th>Skipped / error</th></tr></thead><tbody>${endpoints}</tbody></table></div></div>
     <div><div class="section-title">Recent runs</div><div class="runs">${runs || '<div class="muted">No runs yet</div>'}</div></div>
     <details class="raw" open><summary>Config<button class="btn ghost sm" data-copy="${esc(d.yaml)}">${icon("copy")}Copy</button></summary><pre class="code">${esc(d.yaml)}</pre></details>`);
 }
@@ -634,10 +718,12 @@ function catalogCard(e) {
 function useTemplate(id) {
   const e = cat.data.entries.find((x) => x.id === id);
   if (!e || !e.template || !can("admin")) return;
-  Object.assign(wiz, { step: 0, maxStep: 0, draft: ensureShape(copy(e.template)), sample: "", suggestion: null, test: null, saved: null, fieldErrors: {} });
+  const draft = ensureShape(copy(e.template));
+  Object.assign(wiz, { step: 0, maxStep: 0, active: 0, ep: draft.streams.map(newEndpointState), draft, test: null, saved: null, fieldErrors: {}, tabErrors: new Set() });
   saveWizard();
   location.hash = "wizard";
-  toast(`${e.catalog.name} template loaded: fill in the .env names, then test it`, "ok");
+  const n = draft.streams.length;
+  toast(`${e.catalog.name} template loaded${n > 1 ? ` with ${n} endpoints (${draft.streams.map((x) => x.name).join(", ")})` : ""}: fill in the .env names, then test it`, "ok");
 }
 
 /* ------------------------------------------------------------------ actions & tickets */
@@ -685,14 +771,15 @@ async function renderAudit() {
 }
 
 /* ================================================================== WIZARD */
+/** Server messages start with a field path; each step owns some of them. Mapping messages: mapping/records path/transforms. */
+const isMappingMsg = (m) => /^streams(\.\d+)?(\.(mapping|records_path|transforms)\b|\s.*\b(mapping|mapped)\b)/.test(m);
 const STEPS = [
-  { id: "basics", title: "Basics", prefixes: ["name", "display_name", "base_url", "schedule_seconds", "enabled"] },
-  { id: "auth", title: "Auth", prefixes: ["auth", "scopes"] },
-  { id: "request", title: "Request", prefixes: ["streams.0.endpoint", "streams.0.method", "streams.0.params", "streams.0.name"] },
-  { id: "pagination", title: "Pagination", prefixes: ["streams.0.pagination"] },
-  { id: "mapping", title: "Mapping", prefixes: ["streams.0.mapping", "streams.0.records_path", "streams.0.transforms", "streams.0.entity", "streams.0"] },
-  { id: "test", title: "Test", prefixes: [] },
-  { id: "save", title: "Save", prefixes: [] },
+  { id: "basics", title: "Basics", owns: (m) => /^(name|display_name|base_url|schedule_seconds|enabled)\b/.test(m) },
+  { id: "auth", title: "Auth", owns: (m) => /^(auth|scopes)\b/.test(m) },
+  { id: "endpoints", title: "Endpoints", owns: (m) => /^streams\b/.test(m) && !isMappingMsg(m) },
+  { id: "mapping", title: "Mapping", owns: isMappingMsg },
+  { id: "test", title: "Test", owns: null },
+  { id: "save", title: "Save", owns: null },
 ];
 
 const AUTH_DEFAULTS = {
@@ -710,9 +797,13 @@ const PAGINATION_DEFAULTS = {
   cursor: { type: "cursor", cursor_path: "", cursor_param: "cursor", max_pages: 10 },
   link: { type: "link", next_path: "", max_pages: 10 },
 };
-const ENTITY_STREAM_NAME = { user: "users", device: "devices", event: "events" };
-const newStream = (entity = "event") => ({
-  name: ENTITY_STREAM_NAME[entity], entity, endpoint: "/", method: "GET", params: {},
+const ENTITY_STREAM_NAME = { user: "users", device: "devices", event: "events", repository: "repositories" };
+const ENTITY_OPTIONS = [["event", "Events"], ["user", "Users"], ["device", "Devices"], ["repository", "Repositories"]];
+const entityLabel = (e) => (ENTITY_OPTIONS.find(([v]) => v === e) || [e, e])[1];
+/** Fields an endpoint must map (the server's defaults: a missing id would otherwise become a content hash). */
+const REQUIRED_FIELDS = { user: ["id"], device: ["id"], event: ["id", "timestamp"], repository: ["id", "full_name"] };
+const newStream = (entity = "event", name = ENTITY_STREAM_NAME[entity]) => ({
+  name, entity, endpoint: "/", method: "GET", params: {},
   pagination: copy(PAGINATION_DEFAULTS.none), records_path: "", mapping: {},
   transforms: { severity_map: {}, time_format: "iso8601" },
 });
@@ -726,26 +817,89 @@ function newDraft() {
     streams: [newStream()],
   };
 }
-/** The stream the wizard edits (a config may hold more; edit those in the YAML panel). */
-const S = () => wiz.draft.streams[0];
+const newEndpointState = () => ({ sample: "", suggestion: null, linkHeader: false, check: null });
 
 const savedWiz = storeGet("wizard", null);
-const wiz = (savedWiz && savedWiz.draft && Array.isArray(savedWiz.draft.streams) ? savedWiz : null) || { step: 0, maxStep: 0, draft: newDraft(), sample: "", suggestion: null, test: null, saved: null };
+const wiz = (savedWiz && savedWiz.draft && Array.isArray(savedWiz.draft.streams) ? savedWiz : null)
+  || { step: 0, maxStep: 0, active: 0, ep: [], draft: newDraft(), test: null, saved: null };
+if (!Array.isArray(wiz.ep)) {  // a draft saved by the single-endpoint wizard (7 steps): keep its sample and step
+  wiz.ep = [{ ...newEndpointState(), sample: wiz.sample || "", suggestion: wiz.suggestion || null, linkHeader: !!wiz.linkHeader }];
+  const OLD_TO_NEW = [0, 1, 2, 2, 3, 4, 5];
+  wiz.step = OLD_TO_NEW[wiz.step] ?? 0;
+  wiz.maxStep = OLD_TO_NEW[wiz.maxStep] ?? 0;
+  wiz.active = 0;
+  delete wiz.sample; delete wiz.suggestion; delete wiz.linkHeader;
+}
 wiz.fieldErrors = {};
+wiz.tabErrors = new Set();
+
+/** The endpoint (stream) the wizard is editing, its field-path prefix and its sample / suggestion. */
+const S = () => wiz.draft.streams[wiz.active] || wiz.draft.streams[0];
+const P = () => `streams.${wiz.active}`;
+const EP = () => wiz.ep[wiz.active] || (wiz.ep[wiz.active] = newEndpointState());
+
+/** Keep the per-endpoint state in step with the streams (YAML edits can add or remove some). */
+function syncEndpointState() {
+  const n = wiz.draft.streams.length;
+  while (wiz.ep.length < n) wiz.ep.push(newEndpointState());
+  wiz.ep.length = n;
+  wiz.active = Math.min(Math.max(0, Number(wiz.active) || 0), n - 1);
+}
 
 /** Guarantee the nested objects the form binds to exist (YAML edits may remove them). */
 function ensureShape(d) {
   const base = newDraft();
   for (const k of ["auth", "retry"]) if (typeof d[k] !== "object" || d[k] === null || Array.isArray(d[k])) d[k] = base[k];
-  if (!Array.isArray(d.streams) || !d.streams.length || typeof d.streams[0] !== "object") d.streams = [newStream()];
-  const st = d.streams[0];
-  const fresh = newStream(ENTITY_FIELDS[st.entity] ? st.entity : "event");
-  for (const k of ["params", "pagination", "mapping", "transforms"]) if (typeof st[k] !== "object" || st[k] === null || Array.isArray(st[k])) st[k] = fresh[k];
-  if (typeof st.transforms.severity_map !== "object" || st.transforms.severity_map === null) st.transforms.severity_map = {};
-  for (const k of ["name", "entity", "endpoint", "method"]) if (!st[k]) st[k] = fresh[k];
+  if (!Array.isArray(d.streams) || !d.streams.length) d.streams = [newStream()];
+  d.streams = d.streams.map((st) => (st && typeof st === "object" && !Array.isArray(st) ? st : newStream()));
+  for (const st of d.streams) {
+    if (st.path && !st.endpoint) st.endpoint = st.path;
+    delete st.path;
+    const fresh = newStream(ENTITY_FIELDS[st.entity] ? st.entity : "event");
+    for (const k of ["params", "pagination", "mapping", "transforms"]) if (typeof st[k] !== "object" || st[k] === null || Array.isArray(st[k])) st[k] = fresh[k];
+    if (typeof st.transforms.severity_map !== "object" || st.transforms.severity_map === null) st.transforms.severity_map = {};
+    for (const k of ["name", "entity", "endpoint", "method"]) if (!st[k]) st[k] = fresh[k];
+    if (!st.pagination.type) st.pagination.type = "none";
+  }
   if (!d.auth.type) d.auth.type = "none";
-  if (!st.pagination.type) st.pagination.type = "none";
   return d;
+}
+
+/** A stream name not used yet in this draft: events, events_2, ... */
+function uniqueName(base) {
+  const taken = new Set(wiz.draft.streams.map((s) => s.name));
+  if (!taken.has(base)) return base;
+  let n = 2;
+  while (taken.has(`${base}_${n}`)) n += 1;
+  return `${base}_${n}`;
+}
+
+/** Records of a sample response (records path, else the first list of objects) and their field paths. */
+function sampleRecords(text, recordsPath) {
+  let data;
+  try { data = JSON.parse(text); } catch { return []; }
+  if (recordsPath) for (const k of String(recordsPath).split(".")) data = data == null ? null : data[k];
+  else if (data && !Array.isArray(data) && typeof data === "object") {
+    const list = Object.values(data).find((v) => Array.isArray(v) && v.length && typeof v[0] === "object");
+    data = list || [data];
+  }
+  if (data && !Array.isArray(data) && typeof data === "object") data = [data];
+  return Array.isArray(data) ? data.filter((r) => r && typeof r === "object" && !Array.isArray(r)) : [];
+}
+function leafPaths(obj, prefix = "", out = []) {
+  for (const [k, v] of Object.entries(obj)) {
+    const path = prefix ? `${prefix}.${k}` : k;
+    if (v && typeof v === "object" && !Array.isArray(v) && !prefix) leafPaths(v, path, out); else out.push(path);
+  }
+  return out;
+}
+/** Fields of a parent endpoint's records, for the "insert a parent field" picker. */
+function parentFields(name) {
+  const i = wiz.draft.streams.findIndex((s) => s.name === name);
+  if (i < 0) return [];
+  const rec = sampleRecords((wiz.ep[i] || {}).sample || "", wiz.draft.streams[i].records_path)[0];
+  if (rec) return leafPaths(rec);
+  return Object.values(wiz.draft.streams[i].mapping || {}).filter((v) => /^[A-Za-z_][\w.]*$/.test(v));
 }
 
 const getPath = (o, path) => path.split(".").reduce((a, k) => (a == null ? undefined : a[k]), o);
@@ -809,7 +963,7 @@ function yamlLines(obj, depth) {
 }
 const toYaml = (obj) => yamlLines(obj, 0).join("\n") + "\n";
 
-function saveWizard() { const { fieldErrors, ...rest } = wiz; storeSet("wizard", rest); }
+function saveWizard() { const { fieldErrors, tabErrors, ...rest } = wiz; storeSet("wizard", rest); }
 
 function syncYaml(force = false) {
   const ed = $("#yamlEditor");
@@ -861,7 +1015,7 @@ function select(path, label, options, { switchKind = "", hint = "" } = {}) {
   const v = getPath(wiz.draft, path);
   return `<div class="field"><label class="label" for="f_${path}">${esc(label)}</label>
     <select id="f_${path}" data-path="${path}" ${switchKind ? `data-switch="${switchKind}"` : ""}>
-      ${options.map((o) => { const [val, text] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(val)}" ${val === v ? "selected" : ""}>${esc(text)}</option>`; }).join("")}
+      ${options.map((o) => { const [val, text] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(val)}" ${String(val) === String(v ?? "") ? "selected" : ""}>${esc(text)}</option>`; }).join("")}
     </select>${hint ? `<span class="help">${hint}</span>` : ""}<span class="field-error" data-err-for="${path}">${esc(wiz.fieldErrors[path] || "")}</span></div>`;
 }
 
@@ -915,28 +1069,75 @@ function scopeBadge() {
   return risky.length ? `<div class="notice warn">Write or admin scope: ${esc(risky.join(", "))}. A log connector should be read-only.</div>` : "";
 }
 
-function stepRequest() {
-  return `<h2>Request</h2><p class="lead">Which endpoint returns the records? Put <code>{{ last_sync }}</code> in a parameter to fetch only new data.</p>
-    ${input("streams.0.endpoint", "Endpoint path", { placeholder: "/api/v1/logs" })}
-    ${row2(select("streams.0.method", "Method", ["GET", "POST"]), input("streams.0.name", "Stream name", { placeholder: "events", hint: "One config can hold several streams" }))}
-    ${kvEditor("streams.0.params", "Query parameters (optional)", { keyPh: "since", valPh: "{{ last_sync }}" })}`;
+function endpointCard(st, i) {
+  const fe = st.for_each;
+  const only = wiz.draft.streams.length === 1;
+  return `<div class="ep-card ${i === wiz.active ? "active" : ""} ${wiz.tabErrors.has(i) ? "has-error" : ""}" data-ep="${i}" role="button" tabindex="0" aria-pressed="${i === wiz.active}" aria-label="Edit endpoint ${esc(st.name)}">
+    <div class="ep-top"><span class="ep-num">${i + 1}</span><b class="mono ep-name">${esc(st.name || "(unnamed)")}</b><span class="chip-sm">${esc(entityLabel(st.entity))}</span>
+      <span class="ep-actions"><button class="icon-btn" type="button" data-ep-dup="${i}" title="Duplicate" aria-label="Duplicate endpoint ${esc(st.name)}">${icon("copy")}</button>
+      <button class="icon-btn" type="button" data-ep-del="${i}" title="${only ? "An integration needs at least one endpoint" : "Remove"}" aria-label="Remove endpoint ${esc(st.name)}" ${only ? "disabled" : ""}>${icon("x")}</button></span></div>
+    <div class="ep-path mono" title="${esc(st.endpoint)}">${esc(st.method || "GET")} ${esc(st.endpoint || "/")}</div>
+    ${fe ? `<div class="muted sm">For each record of <span class="mono">${esc(fe.stream)}</span>${st.merge_into_parent ? " · merged into it" : ""}</div>` : ""}
+  </div>`;
 }
 
-function stepPagination() {
-  const t = S().pagination.type;
-  const p = "streams.0.pagination.";
+function stepEndpoints() {
+  const st = S(), p = P(), fe = st.for_each;
+  const as = (fe && fe.as) || "item";
+  return `<h2>Endpoints</h2><p class="lead">One integration can pull several endpoints with the same login. Each endpoint has its own path, paging and mapping, and fills one table.</p>
+    <div class="ep-grid">${wiz.draft.streams.map(endpointCard).join("")}
+      <button class="ep-add" type="button" id="epAdd">${icon("plus")}Add endpoint</button></div>
+    <div class="ep-editor">
+      <h3>Endpoint ${wiz.active + 1}: <span class="mono">${esc(st.name)}</span></h3>
+      ${row2(input(`${p}.name`, "Endpoint name", { placeholder: "events", hint: "Unique within this integration" }),
+        select(`${p}.entity`, "Fills", ENTITY_OPTIONS, { switchKind: "entity", hint: `Fields: ${ENTITY_FIELDS[st.entity].join(", ")}` }))}
+      ${row2(select(`${p}.method`, "Method", ["GET", "POST"]),
+        input(`${p}.endpoint`, "Path", { placeholder: fe ? `/repos/{{ ${as}.full_name }}/languages` : "/api/v1/logs",
+          hint: fe ? `<code>{{ ${esc(as)}.&lt;field&gt; }}</code> is a field of the ${esc(fe.stream)} record` : "Add <code>{{ last_sync }}</code> to a parameter to fetch only new data" }))}
+      ${kvEditor(`${p}.params`, "Query parameters (optional)", { keyPh: "since", valPh: "{{ last_sync }}" })}
+      ${forEachFields(st, p)}
+      <h3>Pagination</h3>
+      ${paginationFields(st, p)}
+    </div>`;
+}
+
+function forEachFields(st, p) {
+  const fe = st.for_each;
+  const parents = wiz.draft.streams.filter((s, i) => i !== wiz.active && !(s.for_each && s.for_each.stream === st.name));
+  const options = [["", "Once per run"], ...parents.map((s) => [s.name, `For each record of ${s.name}`])];
+  let html = `<div class="field"><label class="label" for="f_foreach">Run</label>
+    <select id="f_foreach" data-foreach>${options.map(([v, t]) => `<option value="${esc(v)}" ${((fe && fe.stream) || "") === v ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>
+    <span class="help">"For each record" calls this endpoint once per record of another endpoint (e.g. once per repository). That endpoint runs first.</span>
+    <span class="field-error" data-err-for="${p}.for_each">${esc(wiz.fieldErrors[`${p}.for_each`] || "")}</span></div>`;
+  if (!fe) return html;
+  const parent = wiz.draft.streams.find((s) => s.name === fe.stream);
+  const fields = parentFields(fe.stream);
+  html += row2(input(`${p}.for_each.as`, "Name of the parent record", { placeholder: "repo", hint: "Used in the path, e.g. {{ repo.full_name }}" }),
+    input(`${p}.for_each.where`, "Only records where (optional)", { placeholder: "!description", hint: "JMESPath condition on the parent record" }));
+  html += `<div class="field"><span class="label">Insert a parent field into the path</span><div class="chips">${fields.length
+    ? fields.slice(0, 40).map((f) => `<button class="chip" type="button" data-insert-field="${esc(f)}">${esc(f)}</button>`).join("")
+    : `<span class="muted sm">Fetch a sample of ${esc(fe.stream)} on the Mapping step to list its fields</span>`}</div></div>`;
+  const canMerge = parent && parent.entity === st.entity && st.entity !== "event";
+  html += row2(input(`${p}.for_each.concurrency`, "Parallel requests", { type: "number", placeholder: "4", hint: "1-16. Rate limits, Retry-After and retries still apply" }),
+    canMerge ? select(`${p}.merge_into_parent`, "Store the result", [["false", "As new records"], ["true", `Merged into the ${parent.name} record`]],
+      { hint: "Merged: adds fields (e.g. languages) to the parent record" }) : "<div></div>");
+  return html;
+}
+
+function paginationFields(st, p) {
+  const t = st.pagination.type;
+  const pp = `${p}.pagination.`;
   const fields = {
-    none: `<div class="notice">One request per run.</div>`,
-    page: row2(input(`${p}page_param`, "Page parameter", { placeholder: "page" }), input(`${p}size_param`, "Page-size parameter", { placeholder: "page_size" }))
-      + row2(input(`${p}page_size`, "Page size", { type: "number", placeholder: "100" }), input(`${p}total_pages_path`, "Total pages path (optional)", { placeholder: "total_pages", hint: "JMESPath in the response" })),
-    offset: row2(input(`${p}limit_param`, "Limit parameter", { placeholder: "limit" }), input(`${p}offset_param`, "Offset parameter", { placeholder: "offset" }))
-      + row2(input(`${p}limit`, "Page size", { type: "number", placeholder: "100" }), input(`${p}total_path`, "Total count path (optional)", { placeholder: "totalResults" })),
-    cursor: row2(input(`${p}cursor_path`, "Cursor path in the response", { placeholder: "meta.next_cursor", hint: "JMESPath; stops when empty" }), input(`${p}cursor_param`, "Cursor parameter", { placeholder: "cursor" })),
-    link: input(`${p}next_path`, "Next URL path in the body (optional)", { placeholder: "links.next", hint: 'Leave empty to follow the <code>Link: &lt;…&gt;; rel="next"</code> header (Okta, GitHub). Links to other hosts are refused.' }),
+    none: `<div class="notice">One request per run${st.for_each ? " (per parent record)" : ""}.</div>`,
+    page: row2(input(`${pp}page_param`, "Page parameter", { placeholder: "page" }), input(`${pp}size_param`, "Page-size parameter", { placeholder: "page_size" }))
+      + row2(input(`${pp}page_size`, "Page size", { type: "number", placeholder: "100" }), input(`${pp}total_pages_path`, "Total pages path (optional)", { placeholder: "total_pages", hint: "JMESPath in the response" })),
+    offset: row2(input(`${pp}limit_param`, "Limit parameter", { placeholder: "limit" }), input(`${pp}offset_param`, "Offset parameter", { placeholder: "offset" }))
+      + row2(input(`${pp}limit`, "Page size", { type: "number", placeholder: "100" }), input(`${pp}total_path`, "Total count path (optional)", { placeholder: "totalResults" })),
+    cursor: row2(input(`${pp}cursor_path`, "Cursor path in the response", { placeholder: "meta.next_cursor", hint: "JMESPath; stops when empty" }), input(`${pp}cursor_param`, "Cursor parameter", { placeholder: "cursor" })),
+    link: input(`${pp}next_path`, "Next URL path in the body (optional)", { placeholder: "links.next", hint: 'Leave empty to follow the <code>Link: &lt;…&gt;; rel="next"</code> header (Okta, GitHub). Links to other hosts are refused.' }),
   }[t] || "";
-  return `<h2>Pagination</h2><p class="lead">How does the API split results across pages?</p>
-    ${row2(select(`${p}type`, "Pagination type", [["none", "None"], ["page", "Page number"], ["offset", "Limit / offset"], ["cursor", "Cursor / token"], ["link", "Next link (Link header)"]], { switchKind: "pagination" }),
-      t === "none" ? "<div></div>" : input(`${p}max_pages`, "Max pages per run", { type: "number", placeholder: "10" }))}
+  return `${row2(select(`${pp}type`, "Pagination type", [["none", "None"], ["page", "Page number"], ["offset", "Limit / offset"], ["cursor", "Cursor / token"], ["link", "Next link (Link header)"]], { switchKind: "pagination" }),
+      t === "none" ? "<div></div>" : input(`${pp}max_pages`, "Max pages per run", { type: "number", placeholder: "10" }))}
     ${fields}`;
 }
 
@@ -947,12 +1148,34 @@ function confBar(c) {
 }
 const engineLabel = (e) => (e && e.startsWith("AI") ? `AI · ${e.replace(/^AI \(|\)$/g, "")}` : "Rule-based");
 
+/** One tab per endpoint (Mapping and Test steps); on Test each tab carries the endpoint's pass/fail badge. */
+function endpointTabs(withBadges = false) {
+  return `<div class="ep-tabs" role="tablist" aria-label="Endpoints">${wiz.draft.streams.map((s, i) => {
+    const r = withBadges ? testResult(s.name) : null;
+    const badge = r ? `<span class="pill ${r.cls}"><i></i>${esc(r.label)}</span>` : "";
+    return `<button class="ep-tab ${i === wiz.active ? "active" : ""} ${wiz.tabErrors.has(i) ? "has-error" : ""}" type="button" role="tab" aria-selected="${i === wiz.active}" data-ep="${i}">
+      <span class="mono">${esc(s.name)}</span><span class="muted sm">${esc(entityLabel(s.entity))}</span>${badge}</button>`;
+  }).join("")}</div>`;
+}
+
+function checkMark(field) {
+  const c = (EP().check || {}).fields || {};
+  const r = c[field];
+  if (!r) return "";
+  if (!r.ok) return `<span class="map-check bad">${r.error ? esc(r.error) : "Not found in the sample"}</span>`;
+  if (r.note) return `<span class="map-check muted">${esc(r.note)}</span>`;
+  const ex = typeof r.example === "object" ? JSON.stringify(r.example) : String(r.example);
+  return `<span class="map-check ok" title="${esc(ex)}">✓ ${esc(ex.length > 40 ? `${ex.slice(0, 40)}…` : ex)}${r.found_in < r.of ? ` <span class="muted">(${r.found_in}/${r.of})</span>` : ""}</span>`;
+}
+
 function stepMapping() {
-  const s = wiz.suggestion;
-  const paths = s ? s.available_paths.map((p) => p.path) : [];
-  const datalist = `<datalist id="pathOptions">${paths.map((p) => `<option value="${esc(p)}">`).join("")}</datalist>`;
-  const st = S();
+  const e = EP();
+  const s = e.suggestion;
+  const paths = s ? s.available_paths.map((x) => x.path) : [];
+  const datalist = `<datalist id="pathOptions">${paths.map((x) => `<option value="${esc(x)}">`).join("")}</datalist>`;
+  const st = S(), p = P(), fe = st.for_each;
   const entity = st.entity;
+  const required = st.merge_into_parent ? [] : REQUIRED_FIELDS[entity] || ["id"];
   let ai = "";
   if (s) {
     const isAi = s.engine.startsWith("AI");
@@ -973,64 +1196,104 @@ function stepMapping() {
       }).join("")}</tbody></table></div>
       ${s.entity === "event" ? `<div class="muted sm">Severity map <code>${esc(JSON.stringify(s.severity_map))}</code>${s.default_severity ? ` · default severity <b>${esc(s.default_severity)}</b>` : ""}</div>` : ""}
       ${(s.notes || []).map((n) => `<div class="muted sm">${esc(n)}</div>`).join("")}
-      <div style="display:flex;align-items:center;gap:12px"><button class="btn primary" id="applySuggestion">Apply to config</button><span class="muted sm">AI suggests, code checks every path against the sample, you approve.</span></div>
+      <div style="display:flex;align-items:center;gap:12px"><button class="btn primary" id="applySuggestion">Apply to ${esc(st.name)}</button><span class="muted sm">AI suggests, code checks every path against the sample, you approve.</span></div>
     </div>`;
   }
-  return `<h2>Field mapping</h2><p class="lead">Pick the common table, fetch or paste one sample response, let the assistant suggest the mapping, then review it.</p>
+  const notes = [];
+  if (fe) notes.push(`Runs once per record of <span class="mono">${esc(fe.stream)}</span>: the sample is fetched for its first record. Use <code>parent().field</code> for fields of that record.`);
+  if (st.merge_into_parent) notes.push(`Merged into the <span class="mono">${esc(fe.stream)}</span> record: map only the fields this endpoint adds (the id comes from the parent).`);
+  const check = e.check;
+  return `<h2>Field mapping</h2><p class="lead">Each endpoint has its own mapping. Fetch or paste one sample response, let the assistant suggest the mapping, then review it.</p>
+    ${endpointTabs()}
     ${datalist}
-    ${select("streams.0.entity", "This stream fills", [["event", "Events"], ["user", "Users"], ["device", "Devices"]], { switchKind: "entity",
-      hint: `Fields: ${ENTITY_FIELDS[entity].join(", ")} (source and fetched_at are added automatically)` })}
-    <div class="field"><label class="label" for="sampleInput">Sample API response (JSON)</label>
-      <textarea id="sampleInput" class="mono" rows="8" spellcheck="false" placeholder='e.g. {"data": [ ... ]}'>${esc(wiz.sample)}</textarea></div>
-    <div style="display:flex;gap:8px"><button class="btn secondary" id="fetchSample">Fetch sample from API</button>${gatedBtn("admin", "Suggest mapping", 'id="suggestBtn"', "btn primary")}</div>
+    <div class="muted sm">Endpoint <span class="mono">${esc(st.method || "GET")} ${esc(st.endpoint)}</span> fills <b>${esc(entityLabel(entity))}</b> · fields: ${esc(ENTITY_FIELDS[entity].join(", "))} (source and fetched_at are added automatically)</div>
+    ${notes.map((n) => `<div class="notice">${n}</div>`).join("")}
+    <div class="field"><label class="label" for="sampleInput">Sample API response for ${esc(st.name)} (JSON)</label>
+      <textarea id="sampleInput" class="mono" rows="8" spellcheck="false" placeholder='e.g. {"data": [ ... ]}'>${esc(e.sample)}</textarea></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn secondary" id="fetchSample">Fetch sample from API</button>${gatedBtn("admin", "Suggest mapping", 'id="suggestBtn"', "btn primary")}</div>
     ${ai}
-    <h2 style="margin-top:8px">Mapping saved in the config</h2>
-    ${row2(input("streams.0.records_path", "Records path", { placeholder: "data.alerts", hint: "JMESPath to the list of records; empty = the response is the list" }),
-      select("streams.0.transforms.time_format", `Time format (${TIME_FIELD[entity]})`, [["iso8601", "ISO 8601"], ["epoch_s", "Epoch seconds"], ["epoch_ms", "Epoch milliseconds"]]))}
-    <div class="form-row">${ENTITY_FIELDS[entity].map((f) => `<div class="field"><label class="label" for="m_${f}">${f}</label><input id="m_${f}" class="mono" list="pathOptions" data-path="streams.0.mapping.${f}" value="${esc(st.mapping[f] || "")}" placeholder="not mapped"></div>`).join("")}</div>
-    ${entity === "event" ? select("streams.0.transforms.default_severity", "Default severity (when the value is missing or unknown)", ["", ...SEVERITIES].map((x) => [x, x ? cap(x) : "None"])) : ""}
-    ${entity === "event" ? kvEditor("streams.0.transforms.severity_map", "Severity map (tool value → common severity)", { keyPh: "alert", valueOptions: SEVERITIES }) : ""}`;
+    <h2 style="margin-top:8px">Mapping saved for ${esc(st.name)}</h2>
+    ${check ? `<div class="muted sm">Path check against the sample: ${check.error ? esc(check.error) : `${fmtN(check.records)} record${check.records === 1 ? "" : "s"}`}</div>` : ""}
+    ${row2(input(`${p}.records_path`, "Records path", { placeholder: "data.alerts", hint: "JMESPath to the list of records; empty = the response is the list" }),
+      select(`${p}.transforms.time_format`, `Time format (${TIME_FIELD[entity]})`, [["iso8601", "ISO 8601"], ["epoch_s", "Epoch seconds"], ["epoch_ms", "Epoch milliseconds"]]))}
+    <div class="form-row">${ENTITY_FIELDS[entity].map((f) => `<div class="field"><label class="label" for="m_${f}">${f}${required.includes(f) ? ' <span class="req" title="Required">*</span>' : ""}</label>
+      <input id="m_${f}" class="mono ${wiz.fieldErrors[`${p}.mapping.${f}`] ? "invalid" : ""}" list="pathOptions" data-path="${p}.mapping.${f}" value="${esc(st.mapping[f] || "")}" placeholder="not mapped">
+      <span class="field-error" data-err-for="${p}.mapping.${f}">${esc(wiz.fieldErrors[`${p}.mapping.${f}`] || "")}</span>${checkMark(f)}</div>`).join("")}</div>
+    <span class="field-error" data-err-for="${p}.mapping">${esc(wiz.fieldErrors[`${p}.mapping`] || "")}</span>
+    ${entity === "event" ? select(`${p}.transforms.default_severity`, "Default severity (when the value is missing or unknown)", ["", ...SEVERITIES].map((x) => [x, x ? cap(x) : "None"])) : ""}
+    ${entity === "event" ? kvEditor(`${p}.transforms.severity_map`, "Severity map (tool value → common severity)", { keyPh: "alert", valueOptions: SEVERITIES }) : ""}`;
+}
+
+/** Pass / fail of one endpoint in the last test run. */
+function testResult(name) {
+  const r = ((wiz.test || {}).streams || []).find((x) => x.name === name);
+  if (!r) return null;
+  const status = String(r.status || "");
+  if (status === "ok") {
+    const failed = (!(r.normalised || []).length && (r.quarantined || []).length) || (r.item_errors || []).length;
+    return { ...r, pass: !failed, cls: failed ? "bad" : "ok", label: failed ? "Fail" : "Pass" };
+  }
+  if (status.startsWith("skipped") || status.startsWith("not available")) return { ...r, skipped: true, cls: "idle", label: "Skipped" };
+  return { ...r, pass: false, cls: "bad", label: "Fail" };
 }
 
 function stepTest() {
   const t = wiz.test;
   let out = "";
-  if (t && t.ok) {
-    const others = (t.streams || []).length > 1 ? `<div class="muted sm">Streams: ${t.streams.map((x) => `${esc(x.name)} (${esc(x.entity)}): ${esc(x.status)}`).join(" · ")}</div>` : "";
-    out = `${others}<div class="notice ok">Normalised ${fmtN(t.raw.length)} sample record${t.raw.length === 1 ? "" : "s"} from ${t.pages} page${t.pages === 1 ? "" : "s"}${t.retries ? `, ${t.retries} retr${t.retries === 1 ? "y" : "ies"} (${esc(t.retry_log.join("; "))})` : ""}. Nothing was saved.</div>
-      <div class="panels">
-        <div><div class="section-title">Raw · first ${Math.min(5, t.raw.length)} from the tool</div><pre class="code">${esc(JSON.stringify(t.raw.slice(0, 5), null, 2))}</pre></div>
-        <div><div class="section-title">Normalised · common schema</div><pre class="code">${esc(JSON.stringify((t.normalised || []).slice(0, 5), null, 2))}</pre></div>
-      </div>
-      ${(t.quarantined || []).length ? `<div class="notice warn"><b>${t.quarantined.length} record(s) would be quarantined:</b><ul style="margin:4px 0 0">${t.quarantined.map((q) => `<li>${esc(q.reason)}</li>`).join("")}</ul></div>` : ""}`;
-  } else if (t) {
-    out = `<div class="form-alert" style="margin:0"><b>Test failed${t.stage === "validation" ? ": the config is not valid" : ""}</b><ul>${t.errors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>`;
+  if (t) {
+    const results = wiz.draft.streams.map((s) => testResult(s.name)).filter(Boolean);
+    const ran = results.filter((r) => !r.skipped);
+    const failed = ran.filter((r) => !r.pass);
+    const overall = !t.ok ? ["bad", `Test failed${t.stage === "validation" ? ": the config is not valid" : ""}`]
+      : failed.length ? ["bad", `${failed.length} of ${ran.length} endpoint${ran.length === 1 ? "" : "s"} failed`]
+      : ["ok", `All ${ran.length} endpoint${ran.length === 1 ? "" : "s"} passed`];
+    out = `<div class="test-overall ${overall[0]}"><span class="pill ${overall[0]}"><i></i>${overall[0] === "ok" ? "Pass" : "Fail"}</span><b>${esc(overall[1])}</b><span class="muted sm">Nothing was saved.</span></div>
+      ${(t.errors || []).length ? `<div class="form-alert" style="margin:0"><ul>${t.errors.map((e) => `<li>${esc(humanizeMsg(e))}</li>`).join("")}</ul></div>` : ""}
+      ${results.length ? endpointTabs(true) + testPanel(testResult(S().name)) : ""}`;
   }
-  return `<h2>Test</h2><p class="lead">Runs this config once against the real API <b>without saving</b> and shows the first 5 records, raw and normalised.</p>
+  return `<h2>Test</h2><p class="lead">Runs every endpoint once against the real API <b>without saving</b> and shows the first 5 records of each, raw and normalised.</p>
     <div>${gatedBtn("admin", `${icon("play")}Run test`, 'id="runTest"', "btn primary")}</div>${out}`;
+}
+
+function testPanel(r) {
+  if (!r) return `<div class="muted">This endpoint was not part of the last test run. Run the test again.</div>`;
+  if (r.status !== "ok") return `<div class="notice ${r.skipped ? "" : "warn"}"><b>${esc(r.name)}:</b> ${esc(r.error || r.status)}</div>`;
+  const view = wiz.testView === "raw" ? "raw" : "normalised";
+  const rows = view === "raw" ? (r.raw || []) : (r.normalised || []);
+  const fan = r.for_each ? `<div class="muted sm">Ran for ${fmtN(r.items)} of ${fmtN(r.eligible)} ${esc(r.for_each)} record${r.eligible === 1 ? "" : "s"} (a test uses the first 3)${r.skipped ? ` · ${fmtN(r.skipped)} skipped: ${esc(Object.entries(r.skipped_reasons || {}).map(([k, n]) => `${n} × ${k}`).join("; "))}` : ""}</div>` : "";
+  return `<div class="notice ${r.pass ? "ok" : "warn"}">${esc(r.name)}: normalised ${fmtN((r.normalised || []).length)} sample record${(r.normalised || []).length === 1 ? "" : "s"} from ${fmtN(r.pages)} page${r.pages === 1 ? "" : "s"}${r.retries ? `, ${r.retries} retr${r.retries === 1 ? "y" : "ies"} (${esc((r.retry_log || []).join("; "))})` : ""}.</div>
+    ${fan}
+    <div class="seg" role="tablist" aria-label="Sample view"><button class="chip ${view === "normalised" ? "active" : ""}" data-test-view="normalised" aria-pressed="${view === "normalised"}">Normalised · common schema</button>
+      <button class="chip ${view === "raw" ? "active" : ""}" data-test-view="raw" aria-pressed="${view === "raw"}">Raw · from the tool</button></div>
+    <pre class="code">${esc(JSON.stringify(rows.slice(0, 5), null, 2))}</pre>
+    ${(r.quarantined || []).length ? `<div class="notice warn"><b>${r.quarantined.length} record(s) would be quarantined:</b><ul style="margin:4px 0 0">${r.quarantined.map((q) => `<li>${esc(q.reason)}</li>`).join("")}</ul></div>` : ""}
+    ${(r.item_errors || []).length ? `<div class="notice warn"><b>Failed items:</b><ul style="margin:4px 0 0">${r.item_errors.map((m) => `<li>${esc(m)}</li>`).join("")}</ul></div>` : ""}`;
 }
 
 function stepSave() {
   const d = clean(wiz.draft);
-  const st = (d.streams || [])[0] || {};
-  const map = Object.entries(st.mapping || {}).map(([k, v]) => `${k} ← ${v}`).join(", ");
+  const streams = d.streams || [];
+  const tables = [...new Set(streams.map((s) => ENTITY_STREAM_NAME[s.entity] || "events"))];
   const saved = wiz.saved
-    ? `<div class="notice ok">${esc(wiz.saved)} <div style="margin-top:8px;display:flex;gap:8px">
-        <a class="btn secondary sm" href="#${({ user: "users", device: "devices" })[st.entity] || "events"}">See the data</a><a class="btn secondary sm" href="#integrations">View health</a></div></div>` : "";
+    ? `<div class="notice ok">${esc(wiz.saved)} <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+        ${tables.map((t) => `<a class="btn secondary sm" href="#${t === "repositories" ? "repositories" : t}">See ${esc(t)}</a>`).join("")}<a class="btn secondary sm" href="#integrations">View health</a></div></div>` : "";
   return `<h2>Save and go live</h2><p class="lead">Saving writes <code>configs/integrations/${esc(d.name || "…")}.yaml</code> and schedules it right away. No restart, no code.</p>
     <dl class="summary">
       <dt>Integration</dt><dd>${esc(d.display_name || "-")} <span class="muted mono">${esc(d.name || "")}</span></dd>
-      <dt>Endpoint</dt><dd class="mono">${esc(st.method || "GET")} ${esc((d.base_url || "") + (st.endpoint || ""))}</dd>
-      <dt>Fills</dt><dd>${esc(cap(ENTITY_STREAM_NAME[st.entity] || "events"))}</dd>
+      <dt>Base URL</dt><dd class="mono">${esc(d.base_url || "")}</dd>
       <dt>Auth</dt><dd>${esc(AUTH_LABEL[d.auth?.type] || d.auth?.type)}</dd>
-      <dt>Pagination</dt><dd>${esc(PAGING_LABEL[st.pagination?.type] || st.pagination?.type)}</dd>
       <dt>Schedule</dt><dd>every ${esc(d.schedule_seconds)} s</dd>
-      <dt>Mapping</dt><dd class="mono">${esc(map || "-")}</dd>
+      <dt>Endpoints</dt><dd>${streams.length}</dd>
     </dl>
+    <div class="table-wrap"><table class="table"><thead><tr><th>Endpoint</th><th>Request</th><th>Fills</th><th>Paging</th><th>Mapping</th></tr></thead><tbody>
+      ${streams.map((s) => `<tr><td class="mono">${esc(s.name)}</td><td><span class="mono">${esc(s.method || "GET")} ${esc(s.endpoint || "")}</span>${s.for_each ? `<div class="muted sm">for each ${esc(s.for_each.stream)} record${s.merge_into_parent ? " · merged" : ""}</div>` : ""}</td>
+        <td>${esc(entityLabel(s.entity || "event"))}</td><td>${esc(PAGING_LABEL[(s.pagination || {}).type || "none"])}</td>
+        <td><span class="mono sm" title="${esc(Object.entries(s.mapping || {}).map(([k, v]) => `${k} ← ${v}`).join(", "))}">${Object.keys(s.mapping || {}).length} field${Object.keys(s.mapping || {}).length === 1 ? "" : "s"}</span></td></tr>`).join("")}
+    </tbody></table></div>
     <div style="display:flex;gap:8px">${gatedBtn("admin", "Save and go live", 'id="saveBtn"', "btn primary")}<button class="btn danger hidden" id="overwriteBtn">Overwrite existing</button></div>${saved}`;
 }
 
-const STEP_RENDER = { basics: stepBasics, auth: stepAuth, request: stepRequest, pagination: stepPagination, mapping: stepMapping, test: stepTest, save: stepSave };
+const STEP_RENDER = { basics: stepBasics, auth: stepAuth, endpoints: stepEndpoints, mapping: stepMapping, test: stepTest, save: stepSave };
 
 function renderStepper() {
   $("#stepper").innerHTML = STEPS.map((s, i) => {
@@ -1042,9 +1305,10 @@ function renderStepper() {
 }
 
 function renderStep() {
+  syncEndpointState();
   const step = STEPS[wiz.step];
   $("#stepBody").innerHTML = STEP_RENDER[step.id]();
-  $("#stepBody").classList.toggle("wide", ["mapping", "test"].includes(step.id));
+  $("#stepBody").classList.toggle("wide", ["endpoints", "mapping", "test"].includes(step.id));
   const enabledSel = $('select[data-path="enabled"]');
   if (enabledSel) enabledSel.value = String(wiz.draft.enabled !== false);
   $("#wizBack").disabled = wiz.step === 0;
@@ -1060,27 +1324,39 @@ function renderWizard() {
   syncYaml(true);
 }
 
-/** Server messages start with the field path ("streams.0.endpoint: ..."): show each under its field, the rest in one alert. */
+/** "streams.2 a repository needs ..." -> "Endpoint repo_languages: a repository needs ..." */
+function humanizeMsg(msg) {
+  return String(msg).replace(/^streams\.(\d+)(\.[\w.]+)?[:\s]*/, (all, i, rest) => {
+    const s = wiz.draft.streams[Number(i)];
+    return s ? `Endpoint ${s.name}${rest ? ` (${rest.slice(1)})` : ""}: ` : all;
+  });
+}
+
+/** Server messages start with the field path ("streams.0.endpoint: ..."): show each under its field, the rest in one alert.
+ *  Messages about another endpoint mark its card / tab in red. */
 function showStepErrors(list) {
   wiz.fieldErrors = {};
+  wiz.tabErrors = new Set(list.map((m) => (String(m).match(/^streams\.(\d+)/) || [])[1]).filter((i) => i !== undefined).map(Number));
   const loose = [];
   const fields = $$("#stepBody [data-err-for]").map((el) => el.dataset.errFor).sort((a, b) => b.length - a.length);
   for (const msg of list) {
     const path = fields.find((p) => msg === p || msg.startsWith(`${p}:`) || msg.startsWith(`${p} `) || msg.startsWith(`${p}.`));
-    if (!path) { loose.push(msg); continue; }
+    if (!path) { loose.push(humanizeMsg(msg)); continue; }
     let text = msg.slice(path.length).replace(/^[:.\s]+/, "") || msg;
     if (/^(is|are|must|should|cannot|can't) /.test(text)) {  // "is required" -> "Display name is required"
-      const label = $(`#stepBody [data-err-for="${CSS.escape(path)}"]`).closest(".field").querySelector(".label");
-      text = `${label ? label.textContent.trim() : path} ${text}`;
+      const label = $(`#stepBody [data-err-for="${CSS.escape(path)}"]`).closest(".field")?.querySelector(".label");
+      text = `${label ? label.textContent.replace("*", "").trim() : path} ${text}`;
     }
     wiz.fieldErrors[path] = (wiz.fieldErrors[path] ? `${wiz.fieldErrors[path]} ` : "") + cap(text);
   }
   $$("#stepBody [data-err-for]").forEach((el) => {
     const m = wiz.fieldErrors[el.dataset.errFor];
-    if (m !== undefined || !el.closest(".field").querySelector("[data-secret]")) el.textContent = m || "";
-    const ctl = el.closest(".field").querySelector("input, select");
+    const field = el.closest(".field");
+    if (m !== undefined || !field || !field.querySelector("[data-secret]")) el.textContent = m || "";
+    const ctl = field && field.querySelector("input, select");
     if (ctl && !ctl.dataset.secret) ctl.classList.toggle("invalid", !!m);
   });
+  $$("#stepBody [data-ep]").forEach((el) => el.classList.toggle("has-error", wiz.tabErrors.has(Number(el.dataset.ep))));
   const box = $("#stepErrors");
   box.classList.toggle("hidden", !loose.length);
   box.innerHTML = loose.length ? `<b>Please fix:</b><ul>${loose.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>` : "";
@@ -1095,13 +1371,32 @@ async function validateStep() {
   $$("#stepBody [data-secret]").forEach((el) => {
     if (el.value && !ENV_REF.test(el.value)) errs.push(`${el.dataset.path}: ${SECRET_MSG}`);
   });
-  if (step.id === "mapping" && !Object.values(S().mapping).some(Boolean)) errs.push("Map at least one field (id is a good start)");
-  if (!step.prefixes.length) return errs;
+  if (step.id === "endpoints") {
+    const seen = new Map();
+    wiz.draft.streams.forEach((s, i) => {
+      const name = String(s.name || "").trim();
+      if (name && seen.has(name)) errs.push(`streams.${i}.name: Another endpoint is already called "${name}"`);
+      seen.set(name, i);
+    });
+  }
+  if (step.id === "mapping") {
+    wiz.draft.streams.forEach((s, i) => {
+      const mapped = Object.entries(s.mapping || {}).filter(([, v]) => v);
+      if (s.merge_into_parent) {
+        if (!mapped.length) errs.push(`streams.${i}.mapping: Map at least one field to merge into the parent record`);
+        return;
+      }
+      for (const f of REQUIRED_FIELDS[s.entity] || ["id"]) {
+        if (!(s.mapping || {})[f]) errs.push(`streams.${i}.mapping.${f}: Required for ${entityLabel(s.entity).toLowerCase()}`);
+      }
+    });
+  }
+  if (!step.owns) return errs;
   try {
     await api("/api/integrations/validate", { method: "POST", body: { config: clean(wiz.draft) } });
   } catch (e) {
     for (const msg of errorList(e)) {
-      if (e.status !== 422 || step.prefixes.some((p) => msg === p || msg.startsWith(p + " ") || msg.startsWith(p + ".") || msg.startsWith(p + ":"))) errs.push(msg);
+      if (e.status !== 422 || step.owns(msg)) errs.push(msg);
     }
   }
   return [...new Set(errs)];
@@ -1135,21 +1430,33 @@ function readKv(container) {
 
 function onWizardInput(ev) {
   const el = ev.target;
+  if (el.dataset.foreach !== undefined) {
+    if (ev.type !== "change") return;
+    const st = S();
+    if (!el.value) { delete st.for_each; delete st.merge_into_parent; delete st.parent_status; }
+    else st.for_each = { stream: el.value, as: (st.for_each && st.for_each.as) || el.value.replace(/ies$/, "y").replace(/s$/, ""), ...(st.for_each && st.for_each.where ? { where: st.for_each.where } : {}) };
+    renderStep(); syncYaml(); return;
+  }
   if (el.dataset.path) {
     const path = el.dataset.path;
     let value = el.value;
     if (el.dataset.switch === "auth") { wiz.draft.auth = copy(AUTH_DEFAULTS[value]); renderStep(); syncYaml(); return; }
     if (el.dataset.switch === "pagination") { S().pagination = copy(PAGINATION_DEFAULTS[value]); renderStep(); syncYaml(); return; }
     if (el.dataset.switch === "entity") {
-      Object.assign(S(), { entity: value, name: ENTITY_STREAM_NAME[value], mapping: {} });
-      if (value !== "event") S().transforms = { time_format: S().transforms.time_format || "iso8601" };
-      wiz.suggestion = null;
+      const st = S();
+      const defaultName = !st.name || /^(users|devices|events|repositories)(_\d+)?$/.test(st.name);
+      Object.assign(st, { entity: value, mapping: {} });
+      if (defaultName) { st.name = ""; st.name = uniqueName(ENTITY_STREAM_NAME[value]); }
+      st.transforms = value === "event" ? { severity_map: {}, time_format: st.transforms.time_format || "iso8601" } : { time_format: st.transforms.time_format || "iso8601" };
+      if (value === "event" || !wiz.draft.streams.some((s) => s.name === (st.for_each || {}).stream && s.entity === value)) delete st.merge_into_parent;
+      Object.assign(EP(), { suggestion: null, check: null });
       renderStep(); syncYaml(); return;
     }
     if (path === "enabled") value = value === "true";
+    else if (path.endsWith(".merge_into_parent")) value = value === "true" ? true : undefined;
     else if (el.dataset.type === "number") value = value === "" ? undefined : Number(value);
     else if (el.dataset.type === "list") { value = value.split(/[,\s]+/).filter(Boolean); if (!value.length) value = undefined; }
-    else if ((path.includes(".mapping.") || path.endsWith("default_severity")) && value.trim() === "") value = undefined;
+    else if ((path.includes(".mapping.") || path.endsWith("default_severity") || path.includes(".for_each.")) && value.trim() === "") value = undefined;
     setPath(wiz.draft, path, value);
     if (wiz.fieldErrors[path]) { delete wiz.fieldErrors[path]; const m = $(`[data-err-for="${CSS.escape(path)}"]`); if (m) m.textContent = ""; el.classList.remove("invalid"); }
     if (el.dataset.secret) {
@@ -1159,6 +1466,11 @@ function onWizardInput(ev) {
       if (msg) msg.textContent = bad ? SECRET_MSG : "";
     }
     if (path === "scopes" && $("#scopeBadge")) $("#scopeBadge").innerHTML = scopeBadge();
+    // keep the endpoint card in step without re-rendering (the field keeps focus)
+    const card = $(`.ep-card[data-ep="${wiz.active}"]`);
+    if (card && path === `${P()}.name`) $(".ep-name", card).textContent = value || "(unnamed)";
+    if (card && (path === `${P()}.endpoint` || path === `${P()}.method`)) $(".ep-path", card).textContent = `${S().method || "GET"} ${S().endpoint || "/"}`;
+    if (path.startsWith(`${P()}.mapping.`) || path === `${P()}.records_path`) scheduleCheck();
     syncYaml();
     return;
   }
@@ -1171,21 +1483,95 @@ function onWizardInput(ev) {
     syncYaml();
     return;
   }
-  if (el.dataset.sugg !== undefined && wiz.suggestion) {
-    wiz.suggestion.fields[Number(el.dataset.sugg)].path = el.value.trim();
+  if (el.dataset.sugg !== undefined && EP().suggestion) {
+    EP().suggestion.fields[Number(el.dataset.sugg)].path = el.value.trim();
     saveWizard();
   }
-  if (el.id === "sampleInput") { wiz.sample = el.value; saveWizard(); }
+  if (el.id === "sampleInput") { EP().sample = el.value; saveWizard(); scheduleCheck(); }
+}
+
+/** Per-endpoint path verification: check every mapped path against this endpoint's sample (server-side JMESPath). */
+let checkTimer = null;
+function scheduleCheck() { clearTimeout(checkTimer); checkTimer = setTimeout(checkPaths, 400); }
+async function checkPaths() {
+  const e = EP(), st = S(), idx = wiz.active;
+  if (!e.sample.trim() || STEPS[wiz.step].id !== "mapping") return;
+  try {
+    const r = await api("/api/mapping/check", { method: "POST", body: { sample: e.sample, records_path: st.records_path || null, mapping: st.mapping } });
+    wiz.ep[idx].check = r;
+  } catch { wiz.ep[idx].check = null; }
+  if (idx !== wiz.active || STEPS[wiz.step].id !== "mapping") return;
+  for (const f of ENTITY_FIELDS[st.entity]) {
+    const input = $(`#m_${f}`);
+    if (!input) continue;
+    const old = input.parentElement.querySelector(".map-check");
+    if (old) old.remove();
+    input.parentElement.insertAdjacentHTML("beforeend", checkMark(f));
+  }
+}
+
+function selectEndpoint(i) {
+  if (i === wiz.active || i < 0 || i >= wiz.draft.streams.length) return;
+  wiz.active = i;
+  wiz.fieldErrors = {};
+  renderStep();
+  saveWizard();
+  if (STEPS[wiz.step].id === "mapping" && EP().sample && !EP().check) scheduleCheck();
+}
+
+function addEndpoint(from = null) {
+  const src = from === null ? null : wiz.draft.streams[from];
+  const st = src ? copy(src) : newStream("event", uniqueName("events"));
+  st.name = uniqueName(src ? `${src.name}_copy`.slice(0, 44) : st.name);
+  const at = from === null ? wiz.draft.streams.length : from + 1;
+  wiz.draft.streams.splice(at, 0, st);
+  wiz.ep.splice(at, 0, src ? copy(wiz.ep[from] || newEndpointState()) : newEndpointState());
+  wiz.active = at;
+  wiz.test = null;
+  renderStep(); syncYaml();
+  const name = $(`[data-path="${P()}.name"]`);
+  if (name) { name.focus(); name.select(); }
+}
+
+function removeEndpoint(i) {
+  const st = wiz.draft.streams[i];
+  if (!st || wiz.draft.streams.length === 1) return;
+  const children = wiz.draft.streams.filter((s) => s.for_each && s.for_each.stream === st.name).map((s) => s.name);
+  if (!confirm(`Remove the endpoint "${st.name}"?${children.length ? ` ${children.join(", ")} run${children.length === 1 ? "s" : ""} for each of its records and will run once per run instead.` : ""}`)) return;
+  for (const s of wiz.draft.streams) if (s.for_each && s.for_each.stream === st.name) { delete s.for_each; delete s.merge_into_parent; delete s.parent_status; }
+  wiz.draft.streams.splice(i, 1);
+  wiz.ep.splice(i, 1);
+  wiz.active = Math.min(wiz.active >= i && wiz.active > 0 ? wiz.active - 1 : wiz.active, wiz.draft.streams.length - 1);
+  wiz.test = null;
+  renderStep(); syncYaml();
+}
+
+function insertParentField(field) {
+  const st = S();
+  const as = (st.for_each && st.for_each.as) || "item";
+  const token = `{{ ${as}.${field} }}`;
+  const el = $(`[data-path="${P()}.endpoint"]`);
+  const text = st.endpoint || "/";
+  const at = el && document.activeElement === el ? el.selectionStart : text.length;
+  st.endpoint = text.slice(0, at) + token + text.slice(at);
+  renderStep(); syncYaml();
+  const again = $(`[data-path="${P()}.endpoint"]`);
+  if (again) { again.focus(); again.setSelectionRange(at + token.length, at + token.length); }
 }
 
 async function onWizardClick(ev) {
-  const el = ev.target.closest("button, li[data-step]");
+  const el = ev.target.closest("button, li[data-step], [data-ep]");
   if (!el || el.disabled) return;
   if (el.matches("li[data-step]")) {
     const target = Number(el.dataset.step);
     if (target <= wiz.maxStep || target === wiz.step + 1) goStep(target);
     return;
   }
+  if (el.hasAttribute("data-ep-dup")) return addEndpoint(Number(el.dataset.epDup));
+  if (el.hasAttribute("data-ep-del")) return removeEndpoint(Number(el.dataset.epDel));
+  if (el.hasAttribute("data-ep")) return selectEndpoint(Number(el.dataset.ep));
+  if (el.hasAttribute("data-insert-field")) return insertParentField(el.dataset.insertField);
+  if (el.hasAttribute("data-test-view")) { wiz.testView = el.dataset.testView; renderStep(); return; }
   if (el.hasAttribute("data-store-secret")) {
     const path = el.dataset.storeSecret;
     const name = prompt("Secret name (it becomes a ${NAME} reference in the config):", (getPath(wiz.draft, path) || "").replace(/^\$\{|\}$/g, "") || "MY_TOOL_SECRET");
@@ -1208,11 +1594,12 @@ async function onWizardClick(ev) {
     return;
   }
   switch (el.id) {
+    case "epAdd": return addEndpoint();
     case "fetchSample": return fetchSample(el);
     case "suggestBtn": return suggest(el);
     case "applySuggestion": return applySuggestion();
     case "applyPagination": {
-      const { evidence, ...hint } = wiz.suggestion.pagination_hint;
+      const { evidence, ...hint } = EP().suggestion.pagination_hint;
       S().pagination = Object.assign(copy(PAGINATION_DEFAULTS[hint.type]), hint);
       toast(`Pagination set to ${PAGING_LABEL[hint.type] || hint.type}`, "ok");
       renderStep(); syncYaml();
@@ -1224,6 +1611,11 @@ async function onWizardClick(ev) {
   }
 }
 
+function onWizardKey(ev) {
+  const card = ev.target.closest(".ep-card[data-ep]");
+  if (card && ev.target === card && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); selectEndpoint(Number(card.dataset.ep)); }
+}
+
 async function withBusy(btn, label, fn) {
   const original = btn.innerHTML;
   btn.disabled = true;
@@ -1232,48 +1624,54 @@ async function withBusy(btn, label, fn) {
 }
 
 async function fetchSample(btn) {
+  const idx = wiz.active;
   await withBusy(btn, "Fetching…", async () => {
     try {
-      const r = await api("/api/integrations/sample", { method: "POST", body: { config: clean(wiz.draft), stream: 0 } });
+      const r = await api("/api/integrations/sample", { method: "POST", body: { config: clean(wiz.draft), stream: idx } });
       if (!r.ok) { showStepErrors(r.errors); return; }
-      wiz.sample = JSON.stringify(r.sample, null, 2);
-      wiz.linkHeader = !!r.link_next;
-      $("#sampleInput").value = wiz.sample;
+      Object.assign(wiz.ep[idx], { sample: JSON.stringify(r.sample, null, 2), linkHeader: !!r.link_next });
+      if (idx === wiz.active) $("#sampleInput").value = wiz.ep[idx].sample;
       showStepErrors([]);
-      toast(r.trimmed ? `Sample fetched: showing 20 of ${fmtN(r.record_count)} records` : `Sample fetched: ${fmtN(r.record_count)} records`, "ok");
+      toast(r.trimmed ? `Sample fetched for ${wiz.draft.streams[idx].name}: showing 20 of ${fmtN(r.record_count)} records`
+        : `Sample fetched for ${wiz.draft.streams[idx].name}: ${fmtN(r.record_count)} records`, "ok");
     } catch (e) { showStepErrors(errorList(e)); }
   });
-  if (wiz.sample && can("admin")) await suggest($("#suggestBtn"));
+  if (idx === wiz.active && EP().sample && can("admin")) await suggest($("#suggestBtn"));
+  else scheduleCheck();
 }
 
 async function suggest(btn) {
   const text = $("#sampleInput").value.trim();
   if (!text) { showStepErrors(["Paste a sample API response first, or fetch one from the API"]); return; }
+  const idx = wiz.active, e = EP();
   await withBusy(btn, "Analysing…", async () => {
     try {
-      if (text !== wiz.sample) wiz.linkHeader = false; // pasted by hand: no response headers available
-      wiz.sample = text;
-      wiz.suggestion = await api("/api/ai/suggest-mapping", { method: "POST", body: { sample: text, entity: S().entity, link_header: !!wiz.linkHeader } });
+      if (text !== e.sample) e.linkHeader = false; // pasted by hand: no response headers available
+      e.sample = text;
+      e.suggestion = await api("/api/ai/suggest-mapping", { method: "POST", body: { sample: text, entity: wiz.draft.streams[idx].entity, link_header: !!e.linkHeader } });
       showStepErrors([]);
       saveWizard();
-    } catch (e) { showStepErrors(errorList(e)); }
+    } catch (err) { showStepErrors(errorList(err)); }
   });
   renderStep();
+  scheduleCheck();
 }
 
 function applySuggestion() {
-  const s = wiz.suggestion;
+  const s = EP().suggestion;
   const st = S();
-  st.mapping = Object.fromEntries(s.fields.filter((f) => f.path).map((f) => [f.field, f.path]));
+  const keep = st.merge_into_parent ? ["id"] : [];
+  st.mapping = Object.fromEntries(s.fields.filter((f) => f.path && !keep.includes(f.field)).map((f) => [f.field, f.path]));
   st.records_path = s.records_path || "";
   st.transforms.time_format = s.time_format;
   if (st.entity === "event") {
     st.transforms.severity_map = { ...s.severity_map };
     if (s.default_severity) st.transforms.default_severity = s.default_severity;
   }
-  toast("Mapping applied: review it below", "ok");
+  toast(`Mapping applied to ${st.name}: review it below`, "ok");
   renderStep();
   syncYaml();
+  scheduleCheck();
 }
 
 async function runTest(btn) {
@@ -1307,7 +1705,7 @@ async function save(overwrite) {
 }
 
 function resetWizard() {
-  Object.assign(wiz, { step: 0, maxStep: 0, draft: newDraft(), sample: "", suggestion: null, test: null, saved: null, fieldErrors: {} });
+  Object.assign(wiz, { step: 0, maxStep: 0, active: 0, ep: [], draft: newDraft(), test: null, saved: null, fieldErrors: {}, tabErrors: new Set() });
   showStepErrors([]);
   renderWizard();
 }
@@ -1490,6 +1888,23 @@ function boot() {
   $("#dvPrev").addEventListener("click", () => { dv.offset = Math.max(0, dv.offset - dv.limit); refresh(true); });
   $("#dvNext").addEventListener("click", () => { dv.offset += dv.limit; refresh(true); });
 
+  // repositories
+  const rpRefresh = () => refresh(true);
+  $("#rpSearch").addEventListener("input", debounce((e) => { rp.q = e.target.value.trim(); rpRefresh(); }, 250));
+  $("#rpLanguage").addEventListener("change", (e) => { rp.language = e.target.value; rpRefresh(); });
+  $("#rpTopic").addEventListener("change", (e) => { rp.topic = e.target.value; rpRefresh(); });
+  $("#rpVisibility").addEventListener("change", (e) => { rp.visibility = e.target.value; rpRefresh(); });
+  $("#rpCritical").addEventListener("click", () => { rp.critical = !rp.critical; rpRefresh(); });
+  $("#repoGrid").addEventListener("click", (e) => {
+    if (e.target.closest("a, button")) return;
+    const card = e.target.closest(".repo-card[data-i]");
+    if (card) repoDrawer(rp.items[Number(card.dataset.i)]);
+  });
+  $("#repoGrid").addEventListener("keydown", (e) => {
+    const card = e.target.closest(".repo-card[data-i]");
+    if (card && e.target === card && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); repoDrawer(rp.items[Number(card.dataset.i)]); }
+  });
+
   // integrations
   $("#intGrid").addEventListener("click", (e) => {
     const menuBtn = e.target.closest("[data-menu]");
@@ -1523,6 +1938,7 @@ function boot() {
   $("#stepBody").addEventListener("input", onWizardInput);
   $("#stepBody").addEventListener("change", onWizardInput);
   $("#stepBody").addEventListener("click", onWizardClick);
+  $("#stepBody").addEventListener("keydown", onWizardKey);
   $("#stepper").addEventListener("click", onWizardClick);
   $("#wizNext").addEventListener("click", () => goStep(wiz.step + 1));
   $("#wizBack").addEventListener("click", () => goStep(wiz.step - 1));

@@ -167,6 +167,24 @@ OTHER_ENTITY = {
     "event": {"user", "device", "host", "src", "dst", "parent", "process", "rule", "tenant", "org", "actor", "account", "principal", "request"},
     "user": {"device", "host", "group", "org", "tenant", "manager", "creator", "transaction", "request"},
     "device": {"user", "owner", "group", "org", "tenant", "transaction", "request"},
+    "repository": {"owner", "organization", "license", "parent", "source", "template", "permissions"},
+}
+# Repository fields matched by exact key name (GitHub / GitLab / Bitbucket style), best name first.
+REPO_NAMES = {
+    "full_name": ("full_name", "fullname", "path_with_namespace", "namewithowner", "full_path"),
+    "url": ("html_url", "web_url", "url", "link"),
+    "summary": ("summary",),
+    "topics": ("topics", "tag_list", "tags", "labels"),
+    "primary_language": ("language", "primary_language", "main_language"),
+    "visibility": ("visibility", "private", "is_private"),
+    "is_fork": ("fork", "is_fork", "forked"),
+    "is_archived": ("archived", "is_archived"),
+    "default_branch": ("default_branch", "mainbranch", "main_branch"),
+    "stars": ("stargazers_count", "star_count", "stars", "stargazers", "watchers_count"),
+    "forks": ("forks_count", "forks", "fork_count"),
+    "open_issues": ("open_issues_count", "open_issues", "issues_count"),
+    "created_at": ("created_at", "created_on", "createdat", "created"),
+    "last_pushed_at": ("pushed_at", "last_activity_at", "updated_on", "pushedat", "updated_at"),
 }
 
 
@@ -201,6 +219,12 @@ def _score(field: str, path: str, values: list[Any], entity: str = "event") -> f
             other -= {"user", "account"}
         unique = len(set(map(str, sample))) == len(sample)
         return max(0.0, score - depth_penalty - (0.5 if other else 0) - (0 if unique else 0.3))
+
+    if entity == "repository" and field in REPO_NAMES:
+        names = REPO_NAMES[field]
+        if name.lower() in names:
+            return 0.95 - 0.03 * names.index(name.lower()) - depth_penalty
+        return 0.0
 
     if field in TIME_NAMES:
         parses = _parses_as_time(first)

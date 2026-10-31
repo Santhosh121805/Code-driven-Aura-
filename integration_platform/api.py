@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import logging
 import os
 import re
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import jmespath
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
@@ -18,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from integration_platform.config import (
-    ENTITIES, ENTITY_FIELDS, ROOT, ActionConfig, ConfigError, IntegrationConfig, MissingSecretError, load_action_files,
+    ENTITIES, ENTITY_FIELDS, MUST_MAP, ROOT, ActionConfig, ConfigError, IntegrationConfig, MissingSecretError, load_action_files,
     load_integration_files, missing_settings, parse_yaml, resolve_env, risky_scopes, to_yaml, validate_integration,
 )
 
@@ -30,7 +32,8 @@ from integration_platform import ai_mapper, auth, catalog, demo, demo_mock, logm
 from integration_platform.actions import ActionRunner  # noqa: E402
 from integration_platform.alerts import FailureAlerter  # noqa: E402
 from integration_platform.db import TABLES, Database  # noqa: E402
-from integration_platform.engine import EngineError, dry_run_integration, fetch_sample  # noqa: E402
+from integration_platform.engine import EngineError, dry_run_integration, extract_records, fetch_sample  # noqa: E402
+from integration_platform.normaliser import search as jmes_search  # noqa: E402
 from integration_platform.scheduler import SEEDED_INTEGRATIONS, Registry  # noqa: E402
 from integration_platform.vault import Vault, connector_secret_status, ensure_secrets_key, parse_age_overrides, secret_refs  # noqa: E402
 
@@ -103,7 +106,7 @@ async def _config_error(_, exc: ConfigError) -> JSONResponse:
 
 # ------------------------------------------------------------------ sign-in, roles, audit
 PUBLIC_API = {"/api/auth/login", "/api/auth/logout", "/api/auth/options"}
-AUDIT_SKIP = {"/api/integrations/validate", "/api/convert"}  # pure computations: no state change, no outbound call
+AUDIT_SKIP = {"/api/integrations/validate", "/api/convert", "/api/mapping/check"}  # pure computations: no state change, no outbound call
 AUDIT_LABELS = {
     ("POST", "/api/integrations"): "Created integration", ("PUT", "/api/integrations/{name}"): "Updated integration",
     ("DELETE", "/api/integrations/{name}"): "Deleted integration", ("POST", "/api/integrations/{name}/enable"): "Enabled integration",
@@ -285,11 +288,30 @@ def _health(cfg: IntegrationConfig) -> dict[str, Any]:
     }
 
 
+def _stream_status(cfg: IntegrationConfig) -> list[dict[str, Any]]:
+    """Each endpoint with its outcome in the latest run that reached it: records, last status, last error, skipped items."""
+    last: dict[str, dict[str, Any]] = {}
+    for run in state.db.recent_runs(cfg.name, 10):
+        for s in (run.get("detail") or {}).get("streams", []):
+            if s["name"] not in last and s.get("status") not in (None, "not run"):
+                last[s["name"]] = {**s, "at": run["finished_at"]}
+    out = []
+    for s in cfg.streams:
+        r = last.get(s.name, {})
+        out.append({"name": s.name, "entity": s.entity, "endpoint": s.endpoint, "pagination": s.pagination.type,
+                    "for_each": s.for_each.stream if s.for_each else None, "merge_into_parent": s.merge_into_parent,
+                    "last_status": r.get("status"), "last_at": r.get("at"), "fetched": r.get("fetched"), "new": r.get("new"),
+                    "updated": r.get("updated"), "quarantined": r.get("quarantined"), "skipped": r.get("skipped"),
+                    "skipped_reasons": r.get("skipped_reasons"), "items": r.get("items"), "error": r.get("error"),
+                    "note": r.get("note")})
+    return out
+
+
 def _summary(cfg: IntegrationConfig) -> dict[str, Any]:
     return {
         "name": cfg.name, "display_name": cfg.display_name, "enabled": cfg.enabled, "base_url": cfg.base_url,
         "auth_type": cfg.auth.type, "schedule_seconds": cfg.schedule_seconds,
-        "streams": [{"name": s.name, "entity": s.entity, "endpoint": s.endpoint, "pagination": s.pagination.type} for s in cfg.streams],
+        "streams": _stream_status(cfg),
         "seeded": cfg.name in SEEDED_INTEGRATIONS, "scopes": cfg.scopes, "risky_scopes": risky_scopes(cfg.scopes),
         "health": _health(cfg),
     }
@@ -543,7 +565,8 @@ async def sample(body: ConfigIn) -> dict[str, Any]:
     """Fetch the raw first page of one stream (mapping not required yet) for the AI mapping assistant."""
     data = body.data()
     for s in data.get("streams") or []:
-        s["mapping"] = s.get("mapping") or {"id": "@"}  # placeholder: mapping is decided after seeing the sample
+        # Placeholders: the mapping is decided after seeing the sample (of this or any other endpoint).
+        s["mapping"] = {f: "@" for f in ["id", *MUST_MAP.get(s.get("entity", "event"), [])]} | (s.get("mapping") or {})
     cfg = validate_integration(data)
     if missing := missing_settings(cfg):
         return {"ok": False, "stage": "config", "errors": [f"Not configured: set {', '.join(missing)} in .env"]}
@@ -580,18 +603,62 @@ def store_secret(body: SecretIn, request: Request) -> dict[str, Any]:
 
 # ------------------------------------------------------------------ common-schema data (one place, FR-11)
 def _records(entity: str, source: str | None, severity: str | None, type_: str | None, limit: int, offset: int,
-             q: str | None = None, since: str | None = None) -> dict[str, Any]:
+             q: str | None = None, since: str | None = None, resource: str | None = None) -> dict[str, Any]:
     items, total = state.db.list_records(entity, source or None, severity or None, type_ or None, limit, offset,
-                                         q=(q or "").strip() or None, since=since or None)
+                                         q=(q or "").strip() or None, since=since or None, resource=resource or None)
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
 @app.get("/api/events")
 def list_events(source: str | None = None, severity: str | None = None, type: str | None = None,  # noqa: A002
                 limit: int = Query(50, ge=1, le=500), offset: int = Query(0, ge=0),
-                q: str | None = Query(None, max_length=200), since: str | None = None) -> dict[str, Any]:
-    """`q` searches id/type/description/host/IPs/user/ticket; `since` (ISO 8601 UTC) keeps events at or after it."""
-    return _records("event", source, severity, type, limit, offset, q, since)
+                q: str | None = Query(None, max_length=200), since: str | None = None, resource: str | None = None) -> dict[str, Any]:
+    """`q` searches id/type/description/host/IPs/user/ticket; `since` (ISO 8601 UTC) keeps events at or after it;
+    `resource` = events of one resource (e.g. a repository's Dependabot alerts)."""
+    return _records("event", source, severity, type, limit, offset, q, since, resource)
+
+
+def _repository_view(r: dict[str, Any], alerts: dict[str, dict[str, int]]) -> dict[str, Any]:
+    counts = alerts.get(r["full_name"], {})
+    for sev in ("critical", "high", "medium", "low"):
+        r[f"alerts_{sev}"] = counts.get(sev, 0)
+    for key in ("stars", "forks", "open_issues"):
+        r[key] = int(r[key]) if str(r.get(key) or "").isdigit() else 0
+    for key in ("is_fork", "is_archived"):
+        r[key] = r.get(key) == "True"
+    r["topics"] = r.get("topics") or []
+    r.pop("raw", None)
+    return r
+
+
+@app.get("/api/repositories")
+def list_repositories(q: str | None = Query(None, max_length=200), language: str | None = None, topic: str | None = None,
+                      visibility: str | None = None, critical: bool = False, source: str | None = None) -> dict[str, Any]:
+    """Repositories (every source) with Dependabot alert counts per severity, KPIs and filter options."""
+    alerts = state.db.resource_severity_counts()
+    every = [_repository_view(r, alerts) for r in state.db.list_records("repository", source or None, limit=5000)[0]]
+    items = every
+    needle = (q or "").strip().lower()
+    if needle:
+        items = [r for r in items if needle in " ".join(str(r.get(k) or "") for k in ("full_name", "description", "summary")).lower()
+                 or any(needle in t.lower() for t in r["topics"])]
+    if language:
+        items = [r for r in items if r.get("primary_language") == language]
+    if topic:
+        items = [r for r in items if topic in r["topics"]]
+    if visibility:
+        items = [r for r in items if r.get("visibility") == visibility]
+    if critical:
+        items = [r for r in items if r["alerts_critical"]]
+    languages = sorted({r["primary_language"] for r in every if r.get("primary_language")})
+    kpis = {"repositories": len(every),
+            "with_critical": sum(1 for r in every if r["alerts_critical"]),
+            "languages": len({lang for r in every for lang in (r.get("languages") or {})} | set(languages)),
+            "last_updated": max((r["fetched_at"] for r in every), default=None),
+            "alerts": {sev: sum(r[f"alerts_{sev}"] for r in every) for sev in ("critical", "high", "medium", "low")}}
+    return {"items": items, "total": len(every), "shown": len(items), "kpis": kpis,
+            "facets": {"languages": languages, "topics": sorted({t for r in every for t in r["topics"]}),
+                       "visibility": sorted({r["visibility"] for r in every if r.get("visibility")})}}
 
 
 @app.get("/api/users")
@@ -653,6 +720,48 @@ def suggest_mapping(body: SuggestIn) -> dict[str, Any]:
         return ai_mapper.suggest_mapping(body.sample, entity=body.entity, use_llm=body.use_llm, link_header=body.link_header)
     except ValueError as exc:
         raise HTTPException(422, str(exc))
+
+
+class MappingCheckIn(BaseModel):
+    sample: Any
+    records_path: str | None = None
+    mapping: dict[str, str] = {}
+
+
+@app.post("/api/mapping/check")
+def check_mapping(body: MappingCheckIn) -> dict[str, Any]:
+    """Per-endpoint path verification: does each mapped JMESPath find a value in the sample records? (no outbound call)"""
+    sample = body.sample
+    if isinstance(sample, str):
+        try:
+            sample = json.loads(sample)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(422, f"Sample is not valid JSON: {exc.msg}")
+    try:
+        records = [r for r in extract_records(sample, body.records_path or None) if isinstance(r, dict)][:20]
+    except Exception as exc:
+        return {"records": 0, "error": f"records path: {exc}", "fields": {}}
+    fields: dict[str, Any] = {}
+    for field, path in body.mapping.items():
+        if not path:
+            continue
+        try:
+            jmespath.compile(path)
+        except Exception:
+            fields[field] = {"ok": False, "error": "not a valid JMESPath expression"}
+            continue
+        found = []
+        for r in records:
+            try:
+                value = jmes_search(path, r)
+            except Exception:
+                value = None
+            if value not in (None, "", [], {}):
+                found.append(value)
+        at_run_time = "parent()" in path and not found
+        fields[field] = {"ok": bool(found) or at_run_time, "example": found[0] if found else None, "found_in": len(found),
+                         "of": len(records), "note": "parent() is filled in at run time" if at_run_time else ""}
+    return {"records": len(records), "fields": fields}
 
 
 # ------------------------------------------------------------------ demo

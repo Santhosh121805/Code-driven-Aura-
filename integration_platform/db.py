@@ -221,7 +221,8 @@ class Database:
                       "repository": ("full_name", "description", "summary", "topics", "primary_language")}
 
     def list_records(self, entity: str, source: str | None = None, severity: str | None = None, type_: str | None = None,
-                     limit: int = 50, offset: int = 0, q: str | None = None, since: str | None = None) -> tuple[list[dict], int]:
+                     limit: int = 50, offset: int = 0, q: str | None = None, since: str | None = None,
+                     resource: str | None = None) -> tuple[list[dict], int]:
         table = TABLES[entity]
         where, params = [], []
         if source:
@@ -237,6 +238,8 @@ class Database:
             params += [needle] * len(cols)
         if since and entity == "event":
             where.append("timestamp >= ?"); params.append(since)
+        if resource and entity == "event":
+            where.append("resource = ?"); params.append(resource)
         clause = f"WHERE {' AND '.join(where)}" if where else ""
         order = {"event": "timestamp DESC, row_id DESC", "user": "fetched_at DESC, name", "device": "fetched_at DESC, hostname",
                  "repository": "last_pushed_at DESC, full_name"}[entity]
