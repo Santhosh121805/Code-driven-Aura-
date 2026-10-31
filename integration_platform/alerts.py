@@ -60,7 +60,7 @@ class FailureAlerter:
                 channels.append(result.get("channel", "action"))
             elif result.get("status") == "failed":
                 log.warning("alert channel %s failed: %s", result.get("channel"), result.get("error"))
-        if await asyncio.to_thread(send_email, f"[Integration Hub] {message[:120]}", message):
+        if await asyncio.to_thread(send_email, f"[PlugSec] {message[:120]}", message):
             channels.append("email")
         kind = "failure_alert" if trigger == "connector_failure" else "recovered"
         self.db.add_notification(cfg.name, kind, message, channels)

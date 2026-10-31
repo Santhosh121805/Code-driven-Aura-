@@ -1,4 +1,4 @@
-/* Integration Hub UI - plain JS, no build step, no CDN. */
+/* PlugSec UI - plain JS, no build step, no CDN. */
 "use strict";
 
 const $ = (sel, el = document) => el.querySelector(sel);

@@ -1,4 +1,4 @@
-# Integration Hub: a Config-Driven Generic Integration Platform
+# PlugSec: a Config-Driven Generic Integration Platform
 
 **Add a new security tool with a config file, not code.** One generic engine reads the config, logs in, pages through the API, retries and slows down when it must, quarantines bad records, and maps everything into **one common schema**: users, devices and events. The schema lives in a single store, with a health page and alerts on repeated failure.
 
@@ -93,7 +93,7 @@ python run_all.py
 
 On first run, `run_all.py` creates `.env` from `.env.example` (or upgrades an older `.env`) and generates `SECRETS_KEY`, the vault master key. It then starts the platform plus four mocks: http://localhost:8000 (dashboard), mock tools on ports :9001 to :9003, and the mock Jira board and Slack inbox on :9004 (`/` and `/slack`).
 
-Tests: `python -m pytest`. There are 172 tests; they are hermetic and never read your `.env` or call real APIs.
+Tests: `python -m pytest`. There are 173 tests; they are hermetic and never read your `.env` or call real APIs.
 
 ## Add an integration (config, not code)
 
@@ -194,5 +194,5 @@ configs/integrations/  github, okta, jira, nvd (real) · aws_cloudtrail, acme_fi
 configs/actions/       create_jira_ticket.yaml · slack_failure_alert.yaml (B-4)
 configs/examples/      cisa_kev.yaml (what the live demo creates)
 mocks/                 mock_cloudtrail, mock_firewall (+devices), mock_okta (OAuth2), mock_jira (+Slack inbox), data/kev.json
-tests/                 172 tests, including test_git_hygiene.py
+tests/                 173 tests, including test_git_hygiene.py
 ```

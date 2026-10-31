@@ -1,7 +1,7 @@
 # Alternative to `python run_all.py`: same processes, inside one container.
 # Integration configs keep using http://localhost:900x because platform and mocks share the container.
 services:
-  integration-hub:
+  plugsec:
     build: .
     ports:
       - "8000:8000"   # dashboard + API
