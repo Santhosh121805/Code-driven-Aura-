@@ -60,6 +60,13 @@ def _must_be_env_ref(value: str) -> str:
 SecretRef = Annotated[str, AfterValidator(_must_be_env_ref)]
 
 
+def join_url(base: str, path: str) -> str:
+    """base_url + path with exactly one slash between them: https://api.github.com/ + /user -> https://api.github.com/user."""
+    if not path:
+        return base.rstrip("/")
+    return base.rstrip("/") + "/" + path.lstrip("/")
+
+
 class MissingSecretError(Exception):
     pass
 
@@ -375,7 +382,7 @@ class Stream(_Model):
     def _slash(cls, v: str) -> str:
         if not v.startswith("/"):
             raise ValueError("must start with '/', e.g. /api/v1/users")
-        return v
+        return "/" + v.lstrip("/")  # "//sites/x" (a slash typed after the default "/") -> "/sites/x"
 
     @model_validator(mode="after")
     def _fields_match_entity(self) -> "Stream":

@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from integration_platform.config import (
-    ENTITIES, ENTITY_FIELDS, MUST_MAP, ROOT, ActionConfig, ConfigError, IntegrationConfig, MissingSecretError, load_action_files,
+    ENTITIES, ENTITY_FIELDS, MUST_MAP, ROOT, join_url, ActionConfig, ConfigError, IntegrationConfig, MissingSecretError, load_action_files,
     load_integration_files, missing_settings, parse_yaml, resolve_env, risky_scopes, to_yaml, validate_integration,
 )
 
@@ -602,10 +602,22 @@ def store_secret(body: SecretIn, request: Request) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------ common-schema data (one place, FR-11)
+MOCK_LABEL = re.compile(r"\bmock\b", re.I)
+
+
+def mock_sources() -> tuple[str, ...]:
+    """Integrations labelled "(Mock)" (every mock must say so). The live data views leave them out; the demo controls
+    and the Integrations page still show them. Asking for one source by name still returns its records."""
+    registry = getattr(state, "registry", None)  # unit tests may run without one
+    integrations = getattr(registry, "integrations", {}) or {}
+    return tuple(sorted(name for name, cfg in integrations.items() if MOCK_LABEL.search(cfg.display_name)))
+
+
 def _records(entity: str, source: str | None, severity: str | None, type_: str | None, limit: int, offset: int,
              q: str | None = None, since: str | None = None, resource: str | None = None) -> dict[str, Any]:
     items, total = state.db.list_records(entity, source or None, severity or None, type_ or None, limit, offset,
-                                         q=(q or "").strip() or None, since=since or None, resource=resource or None)
+                                         q=(q or "").strip() or None, since=since or None, resource=resource or None,
+                                         exclude_sources=mock_sources())
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
@@ -636,7 +648,7 @@ def list_repositories(q: str | None = Query(None, max_length=200), language: str
                       visibility: str | None = None, critical: bool = False, source: str | None = None) -> dict[str, Any]:
     """Repositories (every source) with Dependabot alert counts per severity, KPIs and filter options."""
     alerts = state.db.resource_severity_counts()
-    every = [_repository_view(r, alerts) for r in state.db.list_records("repository", source or None, limit=5000)[0]]
+    every = [_repository_view(r, alerts) for r in state.db.list_records("repository", source or None, limit=5000, exclude_sources=mock_sources())[0]]
     items = every
     needle = (q or "").strip().lower()
     if needle:
@@ -675,13 +687,15 @@ def list_devices(source: str | None = None, limit: int = Query(50, ge=1, le=500)
 
 @app.get("/api/stats")
 def stats() -> dict[str, Any]:
-    counts = state.db.counts()
+    mocks = mock_sources()
+    counts = state.db.counts(mocks)
     integrations = list(state.registry.integrations.values())
     connected = sum(1 for c in integrations if c.enabled and _health(c)["status"] in ("healthy", "degraded", "partial"))
     since = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
     return {**counts, "critical": counts["by_severity"].get("critical", 0), "high": counts["by_severity"].get("high", 0),
             "tools_connected": connected, "tools_total": len(integrations), "entities": list(ENTITIES),
-            "tables": list(TABLES.values()), "last_24h": state.db.counts_since(since), "quarantined": state.db.quarantined_total()}
+            "tables": list(TABLES.values()), "last_24h": state.db.counts_since(since, mocks), "quarantined": state.db.quarantined_total(mocks),
+            "hidden_mock_sources": list(mocks)}
 
 
 @app.get("/api/notifications")
@@ -693,7 +707,7 @@ def notifications(limit: int = Query(20, ge=1, le=200)) -> dict[str, Any]:
 @app.get("/api/actions")
 def list_actions() -> dict[str, Any]:
     return {"items": [{"name": a.name, "display_name": a.display_name or a.name, "enabled": a.enabled, "trigger": a.trigger,
-                       "when": a.when.model_dump(exclude_none=True), "target": a.request.base_url + a.request.endpoint,
+                       "when": a.when.model_dump(exclude_none=True), "target": join_url(a.request.base_url, a.request.endpoint),
                        "stats": state.db.action_stats(a.name), "yaml": to_yaml(a)}
                       for a in state.actions.actions.values()],
             "load_errors": state.actions.load_errors}

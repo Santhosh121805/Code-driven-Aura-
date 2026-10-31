@@ -223,11 +223,13 @@ class Database:
 
     def list_records(self, entity: str, source: str | None = None, severity: str | None = None, type_: str | None = None,
                      limit: int = 50, offset: int = 0, q: str | None = None, since: str | None = None,
-                     resource: str | None = None) -> tuple[list[dict], int]:
+                     resource: str | None = None, exclude_sources: tuple[str, ...] = ()) -> tuple[list[dict], int]:
         table = TABLES[entity]
         where, params = [], []
         if source:
             where.append("source = ?"); params.append(source)
+        elif exclude_sources:
+            where.append(f"source NOT IN ({', '.join('?' * len(exclude_sources))})"); params += list(exclude_sources)
         if severity and entity == "event":
             where.append("severity = ?"); params.append(severity)
         if type_ and entity == "event":
@@ -261,24 +263,33 @@ class Database:
     def set_event_ticket(self, source: str, event_id: str, ticket_key: str) -> None:
         self._exec("UPDATE events SET ticket_key = ? WHERE source = ? AND id = ?", (ticket_key, source, event_id))
 
-    def counts(self) -> dict[str, Any]:
+    @staticmethod
+    def _not_in(exclude: tuple[str, ...]) -> tuple[str, list[str]]:
+        """SQL condition leaving out some sources (e.g. labelled mocks in the live views)."""
+        return (f"source NOT IN ({', '.join('?' * len(exclude))})", list(exclude)) if exclude else ("1 = 1", [])
+
+    def counts(self, exclude_sources: tuple[str, ...] = ()) -> dict[str, Any]:
         """Totals per entity and per source, plus event severities and ticket count."""
+        cond, params = self._not_in(exclude_sources)
         out: dict[str, Any] = {}
         for entity, table in TABLES.items():
-            by_src = {r["source"]: r["n"] for r in self._all(f"SELECT source, COUNT(*) AS n FROM {table} GROUP BY source")}
+            by_src = {r["source"]: r["n"] for r in self._all(f"SELECT source, COUNT(*) AS n FROM {table} WHERE {cond} GROUP BY source", params)}
             out[table] = {"total": sum(by_src.values()), "by_source": by_src}
-        out["by_severity"] = {r["severity"]: r["n"] for r in self._all("SELECT severity, COUNT(*) AS n FROM events GROUP BY severity")}
-        out["tickets"] = self._one("SELECT COUNT(*) AS n FROM events WHERE ticket_key IS NOT NULL")["n"]
+        out["by_severity"] = {r["severity"]: r["n"] for r in self._all(f"SELECT severity, COUNT(*) AS n FROM events WHERE {cond} GROUP BY severity", params)}
+        out["tickets"] = self._one(f"SELECT COUNT(*) AS n FROM events WHERE ticket_key IS NOT NULL AND {cond}", params)["n"]
         return out
 
-    def counts_since(self, since: str) -> dict[str, Any]:
+    def counts_since(self, since: str, exclude_sources: tuple[str, ...] = ()) -> dict[str, Any]:
         """Events by severity and tickets for events that happened at or after `since` (ISO 8601 UTC)."""
-        by_sev = {r["severity"]: r["n"] for r in self._all("SELECT severity, COUNT(*) AS n FROM events WHERE timestamp >= ? GROUP BY severity", (since,))}
-        tickets = self._one("SELECT COUNT(*) AS n FROM events WHERE timestamp >= ? AND ticket_key IS NOT NULL", (since,))["n"]
+        cond, params = self._not_in(exclude_sources)
+        by_sev = {r["severity"]: r["n"] for r in self._all(
+            f"SELECT severity, COUNT(*) AS n FROM events WHERE timestamp >= ? AND {cond} GROUP BY severity", [since, *params])}
+        tickets = self._one(f"SELECT COUNT(*) AS n FROM events WHERE timestamp >= ? AND ticket_key IS NOT NULL AND {cond}", [since, *params])["n"]
         return {"events": sum(by_sev.values()), "by_severity": by_sev, "tickets": tickets, "since": since}
 
-    def quarantined_total(self) -> int:
-        return self._one("SELECT COUNT(*) AS n FROM quarantine")["n"]
+    def quarantined_total(self, exclude_sources: tuple[str, ...] = ()) -> int:
+        cond, params = self._not_in(exclude_sources)
+        return self._one(f"SELECT COUNT(*) AS n FROM quarantine WHERE {cond}", params)["n"]
 
     def severity_counts(self, source: str, stream: str) -> dict[str, int]:
         return {r["severity"]: r["n"] for r in self._all(

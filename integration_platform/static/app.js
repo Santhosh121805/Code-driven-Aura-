@@ -17,6 +17,8 @@ const ENV_REF = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
 const ROLE_RANK = { viewer: 0, analyst: 1, admin: 2 };
 const REFRESH_MS = 5000;
 const fmtN = (n) => Number(n || 0).toLocaleString("en-US");
+/** Labelled mocks (Demo source (Mock)) stay out of the live data views; they exist only for the demo controls. */
+const isMock = (i) => /\bmock\b/i.test(i.display_name || "");
 const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : "");
 const copy = (o) => JSON.parse(JSON.stringify(o));
 
@@ -248,7 +250,14 @@ function showPage(page) {
     $(`#page-${nav.page}`).innerHTML = `<div class="card"><div class="empty"><b>${lockTip(nav.role)}</b>Ask an admin if you need access to ${esc(nav.label.toLowerCase())}.</div></div>`;
     return;
   }
-  if (nav.page === "wizard") renderWizard();
+  if (nav.page === "wizard") {
+    if (state.freshWizard) startFreshWizard();
+    else if (state.wizardNotice) showDraftNotice(state.wizardNotice);
+    else noteRestoredDraft();
+    state.freshWizard = false;
+    state.wizardNotice = "";
+    renderWizard();
+  }
   const SKELETON = { events: ["#eventsTable", 6], users: ["#usersTable", 5], devices: ["#devicesTable", 6], audit: ["#auditTable", 6] };
   const sk = SKELETON[nav.page];
   if (sk && !$(`${sk[0]} tbody`).children.length) $(`${sk[0]} tbody`).innerHTML = skeletonRows(sk[1]);
@@ -292,7 +301,7 @@ async function loadIntegrations() {
   state.notifications = data.notifications || [];
   renderBanner();
   const options = ['<option value="">All sources</option>'].concat(
-    data.items.map((i) => `<option value="${esc(i.name)}">${esc(i.display_name)}</option>`)).join("");
+    data.items.filter((i) => !isMock(i)).map((i) => `<option value="${esc(i.name)}">${esc(i.display_name)}</option>`)).join("");
   $$(".src-filter").forEach((sel) => {
     if (sel.dataset.sig === options) return;
     const current = sel.value;
@@ -315,7 +324,7 @@ function renderBanner() {
 /* ------------------------------------------------------------------ overview */
 async function renderOverview() {
   const [st, crit] = await Promise.all([api("/api/stats"), api("/api/events?severity=critical&limit=5")]);
-  const ints = state.integrations;
+  const ints = state.integrations.filter((i) => !isMock(i));
   const by = (cls) => ints.filter((i) => statusOf(i.health)[1] === cls).length;
   const healthy = ints.filter((i) => i.health.colour === "green").length;
   const warn = by("warn"), bad = by("bad");
@@ -420,7 +429,6 @@ async function renderUsers() {
 }
 
 const ONLINE_MS = 5 * 60e3;  // seen in the last 5 minutes = online (Tailscale polls every minute)
-const isMock = (i) => /\bmock\b/i.test(i.display_name);
 function onlineCell(lastSeen) {
   if (!lastSeen) return '<span class="presence"><i class="dot"></i><span class="muted">Never seen</span></span>';
   const age = Date.now() - new Date(lastSeen).getTime();
@@ -430,9 +438,9 @@ function onlineCell(lastSeen) {
 /** Device sources for the filter: integrations with a device stream (or stored devices), real sources first. */
 function renderDeviceSources() {
   const sel = $("#dvSource");
-  const sources = state.integrations.filter((i) => (i.streams || []).some((s) => s.entity === "device") || (i.health.counts || {}).devices)
-    .sort((a, b) => isMock(a) - isMock(b) || a.display_name.localeCompare(b.display_name));
-  const html = ['<option value="">All sources</option>', ...sources.map((i) => `<option value="${esc(i.name)}">${esc(i.display_name)}${isMock(i) ? "" : " (real)"}</option>`)].join("");
+  const sources = state.integrations.filter((i) => !isMock(i) && ((i.streams || []).some((s) => s.entity === "device") || (i.health.counts || {}).devices))
+    .sort((a, b) => a.display_name.localeCompare(b.display_name));
+  const html = ['<option value="">All sources</option>', ...sources.map((i) => `<option value="${esc(i.name)}">${esc(i.display_name)}</option>`)].join("");
   if (sel.dataset.sig !== html) { sel.innerHTML = html; sel.dataset.sig = html; }
   sel.value = dv.source;
 }
@@ -740,6 +748,7 @@ function useTemplate(id) {
   const draft = ensureShape(copy(e.template));
   Object.assign(wiz, { step: 0, maxStep: 0, active: 0, ep: draft.streams.map(newEndpointState), draft, test: null, saved: null, fieldErrors: {}, tabErrors: new Set() });
   saveWizard();
+  state.wizardNotice = `Template loaded: <b>${esc(e.catalog.name)}</b>. Fill in the .env names, then test it. <button class="link" data-draft="fresh">Start fresh</button>`;
   location.hash = "wizard";
   const n = draft.streams.length;
   toast(`${e.catalog.name} template loaded${n > 1 ? ` with ${n} endpoints (${draft.streams.map((x) => x.name).join(", ")})` : ""}: fill in the .env names, then test it`, "ok");
@@ -822,7 +831,7 @@ const entityLabel = (e) => (ENTITY_OPTIONS.find(([v]) => v === e) || [e, e])[1];
 /** Fields an endpoint must map (the server's defaults: a missing id would otherwise become a content hash). */
 const REQUIRED_FIELDS = { user: ["id"], device: ["id"], event: ["id", "timestamp"], repository: ["id", "full_name"] };
 const newStream = (entity = "event", name = ENTITY_STREAM_NAME[entity]) => ({
-  name, entity, endpoint: "/", method: "GET", params: {},
+  name, entity, endpoint: "", method: "GET", params: {},
   pagination: copy(PAGINATION_DEFAULTS.none), records_path: "", mapping: {},
   transforms: { severity_map: {}, time_format: "iso8601" },
 });
@@ -877,7 +886,8 @@ function ensureShape(d) {
     const fresh = newStream(ENTITY_FIELDS[st.entity] ? st.entity : "event");
     for (const k of ["params", "pagination", "mapping", "transforms"]) if (typeof st[k] !== "object" || st[k] === null || Array.isArray(st[k])) st[k] = fresh[k];
     if (typeof st.transforms.severity_map !== "object" || st.transforms.severity_map === null) st.transforms.severity_map = {};
-    for (const k of ["name", "entity", "endpoint", "method"]) if (!st[k]) st[k] = fresh[k];
+    for (const k of ["name", "entity", "method"]) if (!st[k]) st[k] = fresh[k];
+    if (typeof st.endpoint !== "string") st.endpoint = "";
     if (!st.pagination.type) st.pagination.type = "none";
   }
   if (!d.auth.type) d.auth.type = "none";
@@ -1056,8 +1066,18 @@ const row2 = (...fields) => `<div class="form-row">${fields.join("")}</div>`;
 function stepBasics() {
   return `<h2>Basics</h2><p class="lead">Name the tool and point at its API.</p>
     ${row2(input("display_name", "Display name", { placeholder: "Okta" }), input("name", "Integration ID", { placeholder: "okta", hint: "Lowercase letters, digits and underscores. Used as the event source." }))}
-    ${input("base_url", "Base URL", { placeholder: "https://www.cisa.gov", hint: "May reference a setting from .env, e.g. https://${OKTA_DOMAIN}" })}
+    ${input("base_url", "Base URL", { placeholder: "https://www.cisa.gov", hint: "Scheme and host only, e.g. https://api.github.com. May reference a setting from .env, e.g. https://${OKTA_DOMAIN}" })}
+    <div id="baseUrlHint">${baseUrlHint(wiz.draft.base_url)}</div>
     ${row2(input("schedule_seconds", "Run every (seconds)", { type: "number", placeholder: "900", hint: "900 = every 15 minutes" }), select("enabled", "Start enabled", [["true", "Yes"], ["false", "No"]]))}`;
+}
+
+/** Warn (not block) when the base URL carries a path or a trailing slash: URLs are joined with exactly one "/". */
+function baseUrlHint(url) {
+  const m = /^(https?:\/\/[^/?#\s]+)(\/[^?#\s]*)?$/i.exec(String(url || "").trim());
+  if (!m || !m[2] || m[2] === "") return "";
+  if (m[2] === "/") return `<div class="notice">The trailing slash is removed when saving: requests go to <code>${esc(m[1])}/&lt;path&gt;</code>.</div>`;
+  const path = m[2].replace(/\/+$/, "");
+  return `<div class="notice warn">The base URL has a path (<code>${esc(path)}</code>). Every endpoint path is added after it, so don't repeat it: <code>${esc(m[1] + path)}/users</code>, not <code>${esc(m[1] + path + path)}/users</code>.${m[2].endsWith("/") ? " The trailing slash is removed when saving." : ""}</div>`;
 }
 
 function stepAuth() {
@@ -1095,7 +1115,7 @@ function endpointCard(st, i) {
     <div class="ep-top"><span class="ep-num">${i + 1}</span><b class="mono ep-name">${esc(st.name || "(unnamed)")}</b><span class="chip-sm">${esc(entityLabel(st.entity))}</span>
       <span class="ep-actions"><button class="icon-btn" type="button" data-ep-dup="${i}" title="Duplicate" aria-label="Duplicate endpoint ${esc(st.name)}">${icon("copy")}</button>
       <button class="icon-btn" type="button" data-ep-del="${i}" title="${only ? "An integration needs at least one endpoint" : "Remove"}" aria-label="Remove endpoint ${esc(st.name)}" ${only ? "disabled" : ""}>${icon("x")}</button></span></div>
-    <div class="ep-path mono" title="${esc(st.endpoint)}">${esc(st.method || "GET")} ${esc(st.endpoint || "/")}</div>
+    <div class="ep-path mono" title="${esc(st.endpoint)}">${esc(st.method || "GET")} ${esc(st.endpoint || "(no path yet)")}</div>
     ${fe ? `<div class="muted sm">For each record of <span class="mono">${esc(fe.stream)}</span>${st.merge_into_parent ? " · merged into it" : ""}</div>` : ""}
   </div>`;
 }
@@ -1487,6 +1507,7 @@ function onWizardInput(ev) {
       if (msg) msg.textContent = bad ? SECRET_MSG : "";
     }
     if (path === "scopes" && $("#scopeBadge")) $("#scopeBadge").innerHTML = scopeBadge();
+    if (path === "base_url" && $("#baseUrlHint")) $("#baseUrlHint").innerHTML = baseUrlHint(value);
     // keep the endpoint card in step without re-rendering (the field keeps focus)
     const card = $(`.ep-card[data-ep="${wiz.active}"]`);
     if (card && path === `${P()}.name`) $(".ep-name", card).textContent = value || "(unnamed)";
@@ -1726,6 +1747,49 @@ async function save(overwrite) {
   saveWizard();
 }
 
+/** Does the draft hold anything the user typed (so restoring or discarding it matters)? */
+function draftHasContent(d) {
+  return !!(d && (d.name || d.display_name || (d.base_url && d.base_url !== "https://")
+    || (d.streams || []).some((s) => (s.endpoint && s.endpoint !== "/") || Object.keys(s.mapping || {}).length)));
+}
+const draftLabel = (d) => d.display_name || d.name || d.base_url || "untitled";
+
+function showDraftNotice(html) {
+  const box = $("#draftNotice");
+  box.innerHTML = html;
+  box.classList.toggle("hidden", !html);
+}
+
+/** "Add integration": always a clean draft. An unsaved draft is set aside (one slot) and can be brought back. */
+function startFreshWizard() {
+  if (draftHasContent(wiz.draft) && !wiz.saved) {
+    storeSet("wizardPrev", (({ fieldErrors, tabErrors, ...rest }) => rest)(wiz));
+    showDraftNotice(`New integration: clean draft. <span class="muted">Your unsaved draft "${esc(draftLabel(wiz.draft))}" was set aside.</span>
+      <button class="link" data-draft="restore">Restore it</button>`);
+  } else showDraftNotice("");
+  resetWizard();
+}
+
+/** Opening the wizard by reload / back button: keep the draft, and say so. */
+function noteRestoredDraft() {
+  if (draftHasContent(wiz.draft) && !wiz.saved) {
+    showDraftNotice(`<b>Draft restored:</b> "${esc(draftLabel(wiz.draft))}" (step ${wiz.step + 1} of ${STEPS.length}). <button class="link" data-draft="fresh">Start fresh</button>`);
+  } else showDraftNotice("");
+}
+
+function onDraftNotice(ev) {
+  const b = ev.target.closest("[data-draft]");
+  if (!b) return;
+  if (b.dataset.draft === "fresh") { showDraftNotice(""); resetWizard(); return; }
+  const prev = storeGet("wizardPrev", null);
+  if (!prev || !prev.draft) { showDraftNotice(""); return; }
+  Object.assign(wiz, prev, { fieldErrors: {}, tabErrors: new Set() });
+  if (!Array.isArray(wiz.ep)) wiz.ep = [];
+  storeSet("wizardPrev", null);
+  showDraftNotice(`<b>Draft restored:</b> "${esc(draftLabel(wiz.draft))}". <button class="link" data-draft="fresh">Start fresh</button>`);
+  renderWizard();
+}
+
 function resetWizard() {
   Object.assign(wiz, { step: 0, maxStep: 0, active: 0, ep: [], draft: newDraft(), test: null, saved: null, fieldErrors: {}, tabErrors: new Set() });
   showStepErrors([]);
@@ -1870,6 +1934,10 @@ function boot() {
   });
   document.addEventListener("click", (ev) => {
     if (!ev.target.closest("#menu, [data-menu]")) closeMenu();
+    if (ev.target.closest('a[href="#wizard"]') && can("admin")) {  // "Add integration" (sidebar or button): a clean draft
+      state.freshWizard = true;
+      if (state.page === "wizard") { state.freshWizard = false; startFreshWizard(); }
+    }
     const cp = ev.target.closest("[data-copy]");
     if (cp) { ev.preventDefault(); copyText(cp.dataset.copy); return; }
     const preset = ev.target.closest("[data-preset]");
@@ -1964,7 +2032,8 @@ function boot() {
   $("#stepper").addEventListener("click", onWizardClick);
   $("#wizNext").addEventListener("click", () => goStep(wiz.step + 1));
   $("#wizBack").addEventListener("click", () => goStep(wiz.step - 1));
-  $("#wizNew").addEventListener("click", () => { if (confirm("Discard this draft and start a new integration?")) resetWizard(); });
+  $("#wizNew").addEventListener("click", () => { if (confirm("Discard this draft and start a new integration?")) { showDraftNotice(""); resetWizard(); } });
+  $("#draftNotice").addEventListener("click", onDraftNotice);
   $("#yamlToggle").addEventListener("click", () => setYamlOpen($("#wizLayout").classList.contains("yaml-closed")));
   $("#yamlEditor").addEventListener("input", onYamlInput);
   $("#yamlEditor").addEventListener("keydown", (e) => {

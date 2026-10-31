@@ -24,7 +24,7 @@ from jinja2.sandbox import SandboxedEnvironment
 
 from integration_platform.config import (
     ENTITY_FIELDS, AuthApiKey, AuthBasic, AuthBearer, AuthOAuth2, AuthSessionLogin, IntegrationConfig, MissingSecretError, PaginationCursor,
-    PaginationLink, PaginationNone, PaginationOffset, PaginationPage, RateLimitSpec, RetrySpec, Stream, env_refs, lookup_ref,
+    PaginationLink, PaginationNone, PaginationOffset, PaginationPage, RateLimitSpec, RetrySpec, Stream, env_refs, join_url, lookup_ref,
     resolve_env,
 )
 from integration_platform import logmask
@@ -263,7 +263,7 @@ async def apply_auth(client: httpx.AsyncClient, auth: Any, base_url: str, retry:
     if isinstance(auth, AuthBasic):
         return {}, httpx.BasicAuth(resolve_env(auth.username), resolve_env(auth.password))
     if isinstance(auth, AuthOAuth2):
-        token_url = auth.token_url if auth.token_url.startswith("http") else base_url + auth.token_url
+        token_url = auth.token_url if auth.token_url.startswith("http") else join_url(base_url, auth.token_url)
         client_id = resolve_env(auth.client_id)
         cached = _oauth_cache.get((token_url, client_id))
         if cached and cached[1] > time.time() + 30:
@@ -279,7 +279,7 @@ async def apply_auth(client: httpx.AsyncClient, auth: Any, base_url: str, retry:
         _oauth_cache[(token_url, client_id)] = (token, time.time() + float(body.get("expires_in", 300)))
         return {"Authorization": f"Bearer {token}"}, None
     if isinstance(auth, AuthSessionLogin):
-        login_url = auth.login_url if auth.login_url.startswith("http") else base_url + auth.login_url
+        login_url = auth.login_url if auth.login_url.startswith("http") else join_url(base_url, auth.login_url)
         key = (login_url, auth.model_dump_json())
         cached = _session_cache.get(key)
         if cached and cached[1] > time.time():
@@ -391,7 +391,7 @@ class _Request:
         try:
             self.base_url = resolve_env(cfg.base_url).rstrip("/")
             self.path = render_path(stream, item)
-            self.url = self.base_url + self.path
+            self.url = join_url(self.base_url, self.path)
             self.headers = {k: resolve_env(v) for k, v in {**cfg.headers, **stream.headers}.items()}
         except MissingSecretError as exc:
             raise NotConfiguredError(f"Not configured: {exc}")

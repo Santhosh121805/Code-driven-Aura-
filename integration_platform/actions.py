@@ -11,7 +11,7 @@ import jmespath
 from jinja2.sandbox import SandboxedEnvironment
 from markupsafe import Markup
 
-from integration_platform.config import ActionConfig, MissingSecretError, load_action_files, resolve_env
+from integration_platform.config import ActionConfig, MissingSecretError, load_action_files, join_url, resolve_env
 from integration_platform.db import Database
 from integration_platform.engine import EngineError, Sleep, Stats, apply_auth, check_response, send_with_retry
 from integration_platform.logmask import mask_text
@@ -72,7 +72,7 @@ class ActionRunner:
     async def fire(self, action: ActionConfig, event: dict[str, Any]) -> dict[str, Any]:
         ctx = {**{k: None for k in CONTEXT_FIELDS}, **{k: v for k, v in event.items() if k != "raw"}, "raw": event.get("raw")}
         try:
-            target = resolve_env(action.request.base_url).rstrip("/") + action.request.endpoint
+            target = join_url(resolve_env(action.request.base_url), action.request.endpoint)
         except MissingSecretError as exc:  # e.g. SLACK_WEBHOOK_URL not set: channel simply not configured
             return {"status": "not_configured", "error": str(exc)}
         dedupe_key = _text_env.from_string(action.dedupe_key).render(**ctx)

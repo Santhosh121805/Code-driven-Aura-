@@ -266,6 +266,7 @@ streams:
           <li><b>Concurrency and limits:</b> at most <code>concurrency</code> requests at a time. Retries (1 s, 2 s, 4 s), Retry-After and the proactive rate-limit slow-down apply to every item, and a 429 pauses the parallel requests too.</li>
           <li><b>Per-item failures:</b> a 403/404 on one item is recorded with the API's reason and skipped; the stream continues. Health shows "N items skipped" with the reasons. A 401, an exhausted rate limit or a network failure stops the stream, as for any stream.</li>
           <li><b>Safe templates:</b> the path and params may use only <code>{{ as.field }}</code> (the parent record): no settings, no other data. Values are URL-encoded, <code>../</code> is refused, and a parent value can never expand into a <code>${SECRET}</code>. Settings (<code>${NAME}</code>) are resolved before parent values are filled in.</li>
+          <li><b>URLs:</b> the base URL and the path are joined with exactly one <code>/</code> (a trailing slash on the base URL or a doubled slash in the path is removed).</li>
           <li><b>Test runs</b> use the first 3 parent records; <b>Fetch sample</b> uses the first one.</li>
           <li><b>Guard:</b> adding or removing endpoints changes a connector's normal volume, so the exfiltration guard re-learns its baseline when the list of streams changes.</li>
         </ul>
