@@ -14,7 +14,7 @@ from integration_platform.actions import ActionRunner
 from integration_platform.config import MissingSecretError, resolve_env, risky_scopes
 from integration_platform.engine import run_integration
 from integration_platform.vault import Vault, connector_secret_status, ensure_secrets_key, parse_age_overrides, secret_refs
-from mocks import mock_jira
+from tests.fakes import mock_jira
 from tests.conftest import load, no_sleep, okta_config
 
 
@@ -124,7 +124,7 @@ def test_demo_age_override_on_import(vault):
     assert vault.info("MOCK_FIREWALL_API_KEY")["age_days"] == 95 and vault.info("MOCK_CLOUDTRAIL_TOKEN")["age_days"] == 0
     assert secret_refs(okta_config()) == ["MOCK_OKTA_CLIENT_ID", "MOCK_OKTA_CLIENT_SECRET"]
     from integration_platform.config import load_action_files
-    assert secret_refs(load_action_files()[0]["create_jira_ticket"]) == ["MOCK_JIRA_TOKEN", "MOCK_JIRA_USER"]  # actions too
+    assert secret_refs(load_action_files()[0]["create_jira_ticket"]) == ["JIRA_DOMAIN", "jira_email", "jira_token"]  # actions too
 
 
 # ------------------------------------------------------------------ exfiltration guard
@@ -140,19 +140,19 @@ def volume(n: int, start: int):
 
 async def test_guard_flags_bulk_export_raises_critical_alert_and_ticket(db, jira):
     runner = ActionRunner(db, transport=jira, sleep=no_sleep)
-    cfg = load("aws_cloudtrail")
+    cfg = load("aws_cloudtrail").model_copy(update={"name": "okta", "display_name": "Okta"})  # a ticketed source
     for i in range(3):  # baseline: 12 records per run
         r = await run_integration(cfg, db, runner.handle, transport=volume(12, i * 100), sleep=no_sleep)
         assert r["suspicious"] is None
     r = await run_integration(cfg, db, runner.handle, transport=volume(240, 1000), sleep=no_sleep)  # ~20x
     s = r["suspicious"]
     assert r["status"] == "suspicious" and s["records"] == 240 and s["baseline"] == 12 and s["threshold"] == 60 and s["ratio"] == 20.0
-    event = db.get_event("aws_cloudtrail", s["event_id"])
-    assert event["severity"] == "critical" and event["description"] == "Possible token abuse: abnormal data volume from AWS CloudTrail (mock)" and event["type"] == "token_abuse"
+    event = db.get_event("okta", s["event_id"])
+    assert event["severity"] == "critical" and event["description"] == "Possible token abuse: abnormal data volume from Okta" and event["type"] == "token_abuse"
     ticket = next(t for t in mock_jira._tickets if "token abuse" in t["summary"])
-    assert ticket["summary"] == "[CRITICAL] Possible token abuse: abnormal data volume from AWS CloudTrail (mock)"
+    assert ticket["summary"] == "[CRITICAL] Possible token abuse: abnormal data volume from Okta"
     assert event["ticket_key"] == ticket["key"]
-    assert db.baseline_counts("aws_cloudtrail", 10) == [12, 12, 12]  # suspicious run excluded from the baseline
+    assert db.baseline_counts("okta", 10) == [12, 12, 12]  # suspicious run excluded from the baseline
 
 
 async def test_guard_needs_a_baseline_and_ignores_small_feeds(db):
@@ -190,9 +190,26 @@ async def test_suspicious_connector_is_auto_paused_then_resumed(registry, db):
     assert registry.integrations["aws_cloudtrail"].enabled is True and db.get_state("aws_cloudtrail") is None
 
 
+async def test_resume_accepts_the_new_volume_and_relearns_the_baseline(registry, db):
+    """Real case: GitHub's first Dependabot scan jumped from 2 to 183 records per run. After a human resumes,
+    runs at the new legitimate volume must not pause the connector again; a later 20x jump still does."""
+    for i in range(3):
+        registry.transport = volume(12, i * 100)
+        await registry.run_now("aws_cloudtrail")
+    registry.transport = volume(240, 5000)
+    assert (await registry.run_now("aws_cloudtrail"))["status"] == "suspicious"
+    registry.resume("aws_cloudtrail")
+    for i in range(3):
+        registry.transport = volume(240, 5000)  # same full listing every run, like Dependabot alerts
+        assert (await registry.run_now("aws_cloudtrail"))["status"] == "success"
+    assert db.baseline_counts("aws_cloudtrail", 10) == [240, 240, 240]
+    registry.transport = volume(240 * 20, 9000)
+    assert (await registry.run_now("aws_cloudtrail"))["status"] == "suspicious"
+
+
 def test_pause_and_resume_keep_hand_written_yaml_comments(registry, tmp_path):
     from tests.conftest import ROOT
-    original = (ROOT / "configs/integrations/aws_cloudtrail.yaml").read_text(encoding="utf-8")
+    original = (ROOT / "tests/fakes/configs/aws_cloudtrail.yaml").read_text(encoding="utf-8")
     (tmp_path / "aws_cloudtrail.yaml").write_text(original, encoding="utf-8")
     registry.pause_suspicious("aws_cloudtrail", {"records": 88, "baseline": 12})
     paused = (tmp_path / "aws_cloudtrail.yaml").read_text(encoding="utf-8")

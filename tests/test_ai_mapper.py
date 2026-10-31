@@ -3,7 +3,7 @@ import json
 
 from integration_platform import ai_mapper
 from integration_platform.ai_mapper import detect_pagination, detect_records_path, mask, suggest_mapping, verify_suggestion
-from mocks import mock_firewall, mock_okta
+from tests.fakes import mock_firewall, mock_okta
 from tests.conftest import ROOT
 
 OKTA_SAMPLE = [
@@ -64,7 +64,7 @@ def test_devices_from_firewall_inventory_sample():
 
 
 def test_cisa_kev_live_add_suggestion():
-    kev = json.loads((ROOT / "mocks/data/kev.json").read_text(encoding="utf-8"))
+    kev = json.loads((ROOT / "tests/fakes/data/kev.json").read_text(encoding="utf-8"))
     kev["vulnerabilities"] = kev["vulnerabilities"][:20]
     r = suggest_mapping(kev, "event")
     assert r["records_path"] == "vulnerabilities"
@@ -191,7 +191,7 @@ def test_sarvam_reply_without_json_falls_back_to_rules(monkeypatch, caplog):
 
 def test_kev_ai_answer_with_empty_paths_and_free_text_severity(monkeypatch, caplog):
     """What sarvam-105b really answered for CISA KEV: "" for unmapped fields, severity on a free-text field."""
-    kev = json.loads((ROOT / "mocks/data/kev.json").read_text(encoding="utf-8"))
+    kev = json.loads((ROOT / "tests/fakes/data/kev.json").read_text(encoding="utf-8"))
     kev["vulnerabilities"] = kev["vulnerabilities"][:20]
     answer = {"records_path": "vulnerabilities",
               "mapping": {"id": "cveID", "severity": "requiredAction", "timestamp": "dateAdded", "src_ip": "", "dst_ip": ""},

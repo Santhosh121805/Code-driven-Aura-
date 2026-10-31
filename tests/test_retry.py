@@ -159,7 +159,7 @@ async def test_retried_run_is_recorded_with_retries(db):
 async def test_mock_retry_after_demo_control(firewall):
     """The demo control returns 429 with Retry-After: 5 so the wait is visible on stage."""
     from fastapi.testclient import TestClient
-    from mocks import mock_firewall
+    from tests.fakes import mock_firewall
     TestClient(mock_firewall.app).post("/__demo/rate-limit-next", params={"count": 1, "retry_after": 5})
     sleep = SleepRecorder()
     records, stats = await fetch(fw(), firewall, sleep)

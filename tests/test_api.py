@@ -56,7 +56,7 @@ def test_trim_sample_keeps_shape_but_limits_records():
     assert len(big["vulnerabilities"]) == 1766  # original untouched
 
 
-def test_startup_bootstrap_encrypts_every_referenced_secret(tmp_path):
+def test_startup_bootstrap_encrypts_every_referenced_secret(tmp_path, monkeypatch):
     """The lifespan's secret bootstrap over the real seeded configs (integrations AND actions). Unset real secrets are skipped."""
     from cryptography.fernet import Fernet
 
@@ -65,11 +65,13 @@ def test_startup_bootstrap_encrypts_every_referenced_secret(tmp_path):
     from integration_platform.vault import Vault
     api.state.db = Database(tmp_path / "boot.db")
     api.state.vault = Vault(api.state.db, Fernet.generate_key().decode())
+    monkeypatch.setenv("github_token", "test-gh-token-not-real")
+    monkeypatch.setenv("jira_token", "test-jira-token-not-real")  # referenced by the integration AND the ticket action
     try:
         api.bootstrap_secrets()
         names = {r["name"] for r in api.state.db.list_secrets()}
-        assert {"MOCK_FIREWALL_API_KEY", "MOCK_CLOUDTRAIL_TOKEN", "MOCK_OKTA_CLIENT_SECRET", "MOCK_JIRA_TOKEN"} <= names
-        assert not names & {"github_token", "okta_token", "jira_token", "nvd_api_key"}  # not set in tests
+        assert {"github_token", "jira_token"} <= names
+        assert not names & {"okta_token", "nvd_api_key"}  # not set in tests
     finally:
         config.set_secret_lookup(None)
 

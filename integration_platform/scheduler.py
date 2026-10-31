@@ -18,7 +18,7 @@ from integration_platform.engine import clear_oauth_cache, run_integration
 from integration_platform.vault import Vault, secret_refs
 
 log = logging.getLogger("scheduler")
-SEEDED_INTEGRATIONS = ("aws_cloudtrail", "acme_firewall", "mock_okta", "github", "okta", "jira", "nvd")
+SEEDED_INTEGRATIONS = ("github", "okta", "jira", "nvd")
 
 
 class Registry:
@@ -126,6 +126,11 @@ class Registry:
         log.warning("connector %s auto-paused as SUSPICIOUS", name)
 
     def resume(self, name: str) -> IntegrationConfig:
+        state = self.db.get_state(name)
+        if state and state["state"] == "suspicious":
+            # A human reviewed the volume jump (e.g. Dependabot's first scan): accept it and re-learn the baseline,
+            # otherwise every run at the new, legitimate volume would pause the connector again.
+            self.db.restart_baseline(name)
         self.db.clear_state(name)
         return self.set_enabled(name, True)
 

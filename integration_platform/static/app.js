@@ -72,7 +72,8 @@ const pretty = (o) => esc(JSON.stringify(o, null, 2));
 const jiraUrl = () => state.meta.jira_board_url || "#";
 
 function ticketLink(key) {
-  return key ? `<a class="ticket" href="${esc(jiraUrl())}" target="_blank" title="Open the Jira board">${esc(key)}</a>` : `<span class="muted">-</span>`;
+  const href = state.meta.jira_base_url ? `${state.meta.jira_base_url}/browse/${encodeURIComponent(key || "")}` : jiraUrl();
+  return key ? `<a class="ticket" href="${esc(href)}" target="_blank" rel="noopener" title="Open ${esc(key)} in Jira">${esc(key)}</a>` : `<span class="muted">-</span>`;
 }
 
 function openModal(title, html) {
@@ -581,7 +582,7 @@ function kvEditor(path, label, { keyPh = "key", valPh = "value", valueOptions = 
 /* ---------- steps ---------- */
 function stepBasics() {
   return `<h3>Basics</h3><p class="lead">Name the tool and point at its API.</p><div class="form-grid">
-    ${input("display_name", "Display name", { placeholder: "Mock Okta" })}
+    ${input("display_name", "Display name", { placeholder: "e.g. Okta" })}
     ${input("name", "Integration id", { placeholder: "okta", hint: "lowercase, digits, underscores - used as the event source" })}
     ${input("base_url", "Base URL", { placeholder: "https://www.cisa.gov", full: true, hint: "May reference .env, e.g. https://${OKTA_DOMAIN}" })}
     ${input("schedule_seconds", "Run every (seconds)", { type: "number", placeholder: "900", hint: "900 = every 15 minutes" })}
@@ -1043,31 +1044,21 @@ async function boot() {
 
   $("#demoControlsBtn").addEventListener("click", () => {
     $("#settingsMenu").classList.add("hidden");
-    const options = state.integrations.filter((i) => i.enabled && /^http:\/\/(localhost|127\.0\.0\.1)/.test(i.base_url)).map((i) => `<option value="${esc(i.name)}" ${i.name === "acme_firewall" ? "selected" : ""}>${esc(i.display_name)}</option>`).join("");
-    openModal("Demo controls", `<p class="muted">Deterministic triggers for the live demo. Each arms a one-shot fault on the mock tool and runs the connector immediately.</p>
+    openModal("Demo controls", `<p class="muted">Triggers for the live demo, against the real connectors.</p>
       <div class="demo-grid">
         <div class="card"><div class="card-title">Wrong key</div><div class="muted small">Real GitHub API with an invalid token: real HTTP 401, "Authentication failed", no retries.</div>
           <button class="btn primary" data-demo="wrong-key">Call GitHub with a wrong key</button></div>
-        <div class="card"><div class="card-title">Rate limit (Retry-After)</div><div class="muted small">Firewall returns HTTP 429 with Retry-After: 5. The run waits 5 s, then succeeds.</div>
-          <button class="btn primary" data-demo="retry-after">429 with Retry-After: 5</button></div>
-        <div class="card"><div class="card-title">Network off</div><div class="muted small">One Firewall run against a dead address: retries at 1s, 2s, 4s, then FAILED.</div>
+        <div class="card"><div class="card-title">Network off</div><div class="muted small">One GitHub run against a dead address: retries at 1s, 2s, 4s, then FAILED.</div>
           <button class="btn primary" data-demo="network-off">Network off mid-run</button></div>
-        <div class="card"><div class="card-title">Repeated failure (B-4)</div><div class="muted small">3 failed Firewall runs in a row: ONE Slack alert + banner, then a good run: "recovered".</div>
+        <div class="card"><div class="card-title">Repeated failure (B-4)</div><div class="muted small">3 failed GitHub runs in a row: ONE alert, then a good run: "recovered".</div>
           <button class="btn danger" data-demo="repeated-failure">Fail 3 times, then recover</button></div>
-        <div class="card"><div class="card-title">Rate limit (two 429s)</div><div class="muted small">Firewall returns exactly two HTTP 429s, then succeeds.</div>
-          <button class="btn primary" data-demo="firewall-429">Trigger 429 on next Firewall run</button></div>
-        <div class="card"><div class="card-title">2 · Bad data</div><div class="muted small">One record with an unparseable timestamp; it is quarantined, the run continues.</div>
-          <select id="demoConnector">${options}</select>
-          <button class="btn primary" data-demo="malformed">Send a malformed record on next run</button></div>
-        <div class="card"><div class="card-title">3 · Stolen token (INC-05)</div><div class="muted small">Next AWS CloudTrail page returns ~20x normal volume, like a bulk export with a stolen token.</div>
-          <button class="btn danger" data-demo="bulk-export">Simulate stolen-token bulk export</button></div>
       </div><div id="demoResult" class="hint-line"></div>`);
   });
   $("#modalBody").addEventListener("click", async (ev) => {
     const b = ev.target.closest("button[data-demo]");
     if (!b) return;
     const kind = b.dataset.demo;
-    const body = kind === "malformed" ? { connector: $("#demoConnector").value } : {};
+    const body = {};
     await withBusy(b, "Running…", async () => {
       try {
         const { result: r } = await api(`/api/demo/${kind}`, { method: "POST", body });
@@ -1092,7 +1083,7 @@ async function boot() {
       const r = await api("/api/demo/reset", { method: "POST" });
       alerts.seen.clear(); alerts.primed = false; alerts.offset = 0; alerts.expanded.clear();
       resetWizard();
-      toast(`Demo reset${r.removed_integrations.length ? ` - removed ${r.removed_integrations.join(", ")}` : ""}${r.jira_cleared ? " - Jira board cleared" : ""}`, "ok");
+      toast(`Demo reset${r.removed_integrations.length ? ` - removed ${r.removed_integrations.join(", ")}` : ""}`, "ok");
       await loadIntegrations();
       refresh();
     } catch (e) { toast(errorList(e).join("; "), "err"); }

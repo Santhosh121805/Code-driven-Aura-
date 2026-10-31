@@ -3,7 +3,7 @@ import httpx
 
 from integration_platform.actions import ActionRunner
 from integration_platform.engine import run_integration
-from mocks import mock_jira
+from tests.fakes import mock_jira
 from tests.conftest import load, no_sleep
 
 FIXED = {"Records": [
@@ -60,15 +60,15 @@ async def test_last_sync_is_sent_on_the_next_run(db):
 
 async def test_action_fires_once_per_event_and_links_ticket(db, jira):
     runner = ActionRunner(db, transport=jira, sleep=no_sleep)
-    cfg = load("aws_cloudtrail")
+    cfg = load("aws_cloudtrail").model_copy(update={"name": "okta"})  # tickets are scoped to the real incident sources (source_in)
     await run_integration(cfg, db, on_new_event=runner.handle, transport=fixed_transport(), sleep=no_sleep)
     await run_integration(cfg, db, on_new_event=runner.handle, transport=fixed_transport(), sleep=no_sleep)
     assert len(mock_jira._tickets) == 1
     ticket = mock_jira._tickets[0]
-    assert ticket["key"] == "SOC-1"
+    assert ticket["key"] == "KAN-1"
     assert ticket["summary"] == "[CRITICAL] DeleteTrail (cloudtrail.amazonaws.com) on 45.155.205.233"
     events = {e["id"]: e for e in db.list_records("event")[0]}
-    assert events["ct-1"]["ticket_key"] == "SOC-1" and events["ct-2"]["ticket_key"] is None
+    assert events["ct-1"]["ticket_key"] == "KAN-1" and events["ct-2"]["ticket_key"] is None
     again = await runner.fire(runner.actions["create_jira_ticket"], events["ct-1"])
     assert again["status"] == "duplicate" and len(mock_jira._tickets) == 1
 
@@ -79,7 +79,7 @@ async def test_cve_intel_sources_do_not_create_tickets(db, jira):
     assert await runner.handle(event) == []  # action is scoped to incident sources (source_in)
 
 
-async def test_failed_action_is_recorded_and_never_retried_into_a_duplicate(db):
+async def test_failed_action_is_recorded_and_never_retried_into_a_duplicate(db, jira_env):
     calls = {"n": 0}
 
     def flaky(request):

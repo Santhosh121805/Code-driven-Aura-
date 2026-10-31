@@ -235,10 +235,16 @@ class Database:
         return rows
 
     def baseline_counts(self, integration: str, limit: int) -> list[int]:
-        """records_fetched of the last `limit` successful runs (suspicious runs never pollute the baseline)."""
-        rows = self._all("SELECT records_fetched FROM integration_runs WHERE integration = ? AND status = 'success' "
-                         "ORDER BY id DESC LIMIT ?", (integration, limit))
+        """records_fetched of the last `limit` successful runs (suspicious runs never pollute the baseline).
+        Only runs after the latest human resume count: resuming accepts the new volume, so the baseline is re-learnt."""
+        since = int(self.get_last_sync(f"guard_baseline_from:{integration}") or 0)
+        rows = self._all("SELECT records_fetched FROM integration_runs WHERE integration = ? AND status = 'success' AND id > ? "
+                         "ORDER BY id DESC LIMIT ?", (integration, since, limit))
         return [r["records_fetched"] for r in rows]
+
+    def restart_baseline(self, integration: str) -> None:
+        last = self._one("SELECT COALESCE(MAX(id), 0) AS id FROM integration_runs WHERE integration = ?", (integration,))
+        self.set_last_sync(f"guard_baseline_from:{integration}", str(last["id"]))
 
     def run_totals(self, integration: str) -> dict[str, Any]:
         return self._one(
@@ -360,7 +366,9 @@ class Database:
 
     # ------------------------------------------------------------ demo
     def reset(self) -> None:
+        """Clear the demo data. Ticket claims and results stay: the tickets themselves live in the real Jira."""
         with self._lock:
             for table in DATA_TABLES:
-                self._conn.execute(f"DELETE FROM {table}")
+                if table not in ("action_dedupe", "action_results"):
+                    self._conn.execute(f"DELETE FROM {table}")
             self._conn.commit()

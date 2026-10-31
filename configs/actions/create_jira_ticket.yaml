@@ -1,14 +1,15 @@
 name: create_jira_ticket
 display_name: "Create Jira ticket for high/critical alerts"
 enabled: true
-when: { severity_in: [high, critical], source_in: [aws_cloudtrail, acme_firewall, mock_okta, okta, github, jira] }  # incidents only: CVE feeds (NVD, KEV) are intel, not tickets
+# Incidents only: CVE feeds (NVD, KEV) are intel, not tickets; Jira issues are never ticketed back into Jira.
+when: { severity_in: [high, critical], source_in: [okta, github] }
 request:
-  base_url: "http://localhost:9004"
-  endpoint: "/rest/api/3/issue"
+  base_url: "https://${JIRA_DOMAIN}"
+  endpoint: "/rest/api/2/issue"   # v2 takes a plain-text description (v3 needs Atlassian Document Format)
   method: POST
-  auth: { type: basic, username: "${MOCK_JIRA_USER}", password: "${MOCK_JIRA_TOKEN}" }
+  auth: { type: basic, username: "${jira_email}", password: "${jira_token}" }
 body_template: |
-  {"fields": {"project": {"key": "SOC"},
+  {"fields": {"project": {"key": "KAN"},
     "summary": "[{{ severity|upper }}] {{ description }}{% if host or src_ip or user %} on {{ host or src_ip or user }}{% endif %}",
     "description": "Source: {{ source }} | Type: {{ type }} | Event: {{ id }} | Time: {{ timestamp }}",
     "issuetype": {"name": "Task"}}}

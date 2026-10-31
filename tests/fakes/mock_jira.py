@@ -1,4 +1,4 @@
-"""Mock Jira Cloud (port 9004).
+"""Fake Jira Cloud + Slack webhook for tests (in-process via httpx.ASGITransport).
 
 POST /rest/api/3/issue (Basic auth, Jira Cloud body shape) -> {"id": "...", "key": "SOC-<n>", "self": "..."}
 GET  /                 -> auto-refreshing HTML list of tickets (newest first)
@@ -15,7 +15,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from mocks.common import check_basic, env
+from tests.fakes.common import check_basic, env
 
 app = FastAPI(title="Mock Jira")
 _lock = threading.Lock()
@@ -27,6 +27,7 @@ def _auth(request: Request) -> None:
     check_basic(request, env("MOCK_JIRA_USER", "soc-bot@mitigata.local"), env("MOCK_JIRA_TOKEN", "jira-demo-token-91d2"))
 
 
+@app.post("/rest/api/2/issue", status_code=201)
 @app.post("/rest/api/3/issue", status_code=201)
 async def create_issue(request: Request) -> dict:
     global _counter

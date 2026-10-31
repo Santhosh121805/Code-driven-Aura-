@@ -6,7 +6,7 @@ import pytest
 from integration_platform.config import ConfigError, parse_yaml, validate_action, validate_integration
 from tests.conftest import ROOT
 
-BASE = parse_yaml((ROOT / "configs/integrations/aws_cloudtrail.yaml").read_text())
+BASE = parse_yaml((ROOT / "tests/fakes/configs/aws_cloudtrail.yaml").read_text())
 
 
 def errors_for(mutate) -> list[str]:
@@ -25,7 +25,8 @@ def test_seeded_configs_are_valid():
     names = []
     for path in (ROOT / "configs/integrations").glob("*.yaml"):
         names.append(validate_integration(parse_yaml(path.read_text())).name)
-    assert {"aws_cloudtrail", "acme_firewall", "mock_okta", "github", "okta", "jira", "nvd"} <= set(names)
+    assert {"github", "okta", "jira", "nvd"} <= set(names)
+    assert not {"aws_cloudtrail", "acme_firewall", "mock_okta"} & set(names)  # fake tools live in tests/fakes only
     for path in (ROOT / "configs/actions").glob("*.yaml"):
         validate_action(parse_yaml(path.read_text()))
     validate_integration(parse_yaml((ROOT / "configs/examples/cisa_kev.yaml").read_text()))

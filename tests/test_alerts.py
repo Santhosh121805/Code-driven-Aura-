@@ -4,7 +4,7 @@ import pytest
 
 from integration_platform.actions import ActionRunner
 from integration_platform.alerts import FailureAlerter
-from mocks import mock_jira
+from tests.fakes import mock_jira
 from tests.conftest import load, no_sleep
 
 FAIL = {"status": "error", "error": "logs: connection failed (network down or host unreachable) - FAILED after 3 retries"}
@@ -80,11 +80,12 @@ async def test_repeated_failure_demo_through_registry(db, tmp_path, monkeypatch,
     from tests.test_demo_controls import Router
     monkeypatch.setattr(config, "INTEGRATIONS_DIR", tmp_path)
     monkeypatch.setattr(scheduler, "INTEGRATIONS_DIR", tmp_path)
-    router = Router()
-    runner = ActionRunner(db, transport=router, sleep=no_sleep)
+    for k, v in {"github_token": "test-token-not-real", "GITHUB_OWNER": "octo", "GITHUB_REPO": "demo"}.items():
+        monkeypatch.setenv(k, v)
+    runner = ActionRunner(db, transport=slack, sleep=no_sleep)  # Slack webhook -> fake inbox
     reg = scheduler.Registry(db, runner, None, FailureAlerter(db, runner))
-    reg.transport, reg.sleep = router, no_sleep
-    reg.integrations["acme_firewall"] = load("acme_firewall")
+    reg.transport, reg.sleep = Router(), no_sleep  # fake GitHub; the dead address refuses connections
+    reg.integrations["github"] = load("github", enabled=True)
     r = await demo.repeated_failure(reg)
     assert r["failed_runs"] == 3 and len(r["alerts"]) == 1 and r["alerts"][0]["kind"] == "failure_alert"
     assert r["recovery_run"] == "success" and r["recovery"]["kind"] == "recovered"

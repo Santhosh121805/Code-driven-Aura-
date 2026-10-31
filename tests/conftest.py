@@ -37,7 +37,7 @@ for real in ("github_token", "GITHUB_OWNER", "GITHUB_REPO", "GITHUB_ORG", "okta_
 from integration_platform.config import parse_yaml, validate_integration  # noqa: E402
 from integration_platform.db import Database  # noqa: E402
 from integration_platform.engine import clear_oauth_cache  # noqa: E402
-from mocks import mock_cloudtrail, mock_firewall, mock_jira, mock_okta  # noqa: E402
+from tests.fakes import mock_cloudtrail, mock_firewall, mock_jira, mock_okta  # noqa: E402
 
 
 async def no_sleep(_: float) -> None:
@@ -83,14 +83,28 @@ def okta() -> httpx.ASGITransport:
 
 
 @pytest.fixture
-def jira() -> httpx.ASGITransport:
+def jira(jira_env) -> httpx.ASGITransport:
     mock_jira._tickets.clear()
     mock_jira._counter = 0
     return httpx.ASGITransport(app=mock_jira.app)
 
 
+@pytest.fixture
+def jira_env(monkeypatch):
+    """The ticket action targets the real Jira settings: point them at the fake Jira's credentials."""
+    monkeypatch.setenv("JIRA_DOMAIN", "jira.test")
+    monkeypatch.setenv("jira_email", os.environ["MOCK_JIRA_USER"])
+    monkeypatch.setenv("jira_token", os.environ["MOCK_JIRA_TOKEN"])
+
+
+FAKE_CONFIGS = ROOT / "tests" / "fakes" / "configs"  # the fake tools' configs: test-only, never loaded by the platform
+
+
 def raw_config(name: str) -> dict:
-    return parse_yaml((ROOT / "configs" / "integrations" / f"{name}.yaml").read_text())
+    path = FAKE_CONFIGS / f"{name}.yaml"
+    if not path.exists():
+        path = ROOT / "configs" / "integrations" / f"{name}.yaml"
+    return parse_yaml(path.read_text())
 
 
 def load(name: str, stream: dict | None = None, **overrides):

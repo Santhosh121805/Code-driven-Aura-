@@ -17,7 +17,7 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from mocks.common import (
+from tests.fakes.common import (
     HOSTNAMES, MALFORMED_KINDS, USERS, add_demo_controls, any_ip, check_header_key, env, faults_on, inject_malformed, private_ip, recent_time,
     sprinkle_malformed,
 )

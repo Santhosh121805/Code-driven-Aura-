@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from integration_platform.engine import AuthError, NotConfiguredError, fetch_records, run_integration
-from mocks import mock_cloudtrail, mock_firewall, mock_jira, mock_okta
+from tests.fakes import mock_cloudtrail, mock_firewall, mock_jira, mock_okta
 from tests.conftest import load, no_sleep, okta_config, only
 
 

@@ -10,7 +10,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
@@ -18,8 +17,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from integration_platform.config import (
-    ENTITIES, ENTITY_FIELDS, ROOT, ActionConfig, ConfigError, IntegrationConfig, load_action_files, load_integration_files,
-    missing_settings, parse_yaml, resolve_env, risky_scopes, to_yaml, validate_integration,
+    ENTITIES, ENTITY_FIELDS, ROOT, ActionConfig, ConfigError, IntegrationConfig, MissingSecretError, load_action_files,
+    load_integration_files, missing_settings, parse_yaml, resolve_env, risky_scopes, to_yaml, validate_integration,
 )
 
 ENV_FILE = os.environ.get("INTEGRATION_HUB_ENV_FILE", str(ROOT / ".env"))  # tests set this to "" to stay hermetic
@@ -70,7 +69,7 @@ LEGACY_SECRET_NAMES = ("JIRA_USER", "JIRA_TOKEN", "OKTA_CLIENT_ID", "OKTA_CLIENT
 
 
 def bootstrap_secrets() -> None:
-    for name in LEGACY_SECRET_NAMES:  # mock credentials renamed to MOCK_*: drop their orphaned encrypted copies
+    for name in LEGACY_SECRET_NAMES:  # obsolete mock-era secret names: drop orphaned encrypted copies
         state.db.delete_secret(name)
     configs = list(load_integration_files()[0].values()) + list(load_action_files()[0].values())
     import_secrets(sorted({ref for cfg in configs for ref in secret_refs(cfg)}))
@@ -221,8 +220,16 @@ def action_schema() -> dict[str, Any]:
 
 @app.get("/api/meta")
 def meta() -> dict[str, Any]:
-    jira = next((a.request.base_url for a in state.actions.actions.values() if "jira" in a.name), None)
-    return {"llm_provider": ai_mapper.llm_provider(), "jira_board_url": jira, "seeded": list(SEEDED_INTEGRATIONS),
+    jira, board = None, None
+    for action in state.actions.actions.values():
+        if "jira" in action.name:
+            try:
+                jira = resolve_env(action.request.base_url).rstrip("/")  # e.g. https://yourteam.atlassian.net
+            except MissingSecretError:
+                continue
+            project = re.search(r'"project":\s*\{"key":\s*"([A-Z][A-Z0-9_]*)"', action.body_template)
+            board = f"{jira}/browse/{project.group(1)}" if project else jira
+    return {"llm_provider": ai_mapper.llm_provider(), "jira_base_url": jira, "jira_board_url": board, "seeded": list(SEEDED_INTEGRATIONS),
             "entity_fields": ENTITY_FIELDS, "config_load_errors": {**state.registry.load_errors, **state.actions.load_errors}}
 
 
@@ -473,21 +480,7 @@ async def _demo(fn, connector: str | None) -> dict[str, Any]:
         result = await (fn(state.registry, connector) if connector else fn(state.registry))
     except demo.DemoError as exc:
         raise HTTPException(409, str(exc))
-    except httpx.HTTPError as exc:
-        raise HTTPException(502, f"Could not reach the mock tool's demo control endpoint: {exc}")
     return {"ok": True, "result": result}
-
-
-@app.post("/api/demo/firewall-429")
-async def demo_firewall_429(body: DemoIn | None = None) -> dict[str, Any]:
-    """Arm exactly two 429s on the firewall, then run it: health shows 'Recovered after 2 retries'."""
-    return await _demo(demo.trigger_429, body.connector if body else None)
-
-
-@app.post("/api/demo/retry-after")
-async def demo_retry_after(body: DemoIn | None = None) -> dict[str, Any]:
-    """One 429 with Retry-After: 5 on the firewall mock: the run waits 5 s ("waited 5s due to Retry-After"), then succeeds."""
-    return await _demo(demo.trigger_retry_after, body.connector if body else None)
 
 
 @app.post("/api/demo/network-off")
@@ -504,20 +497,8 @@ async def demo_wrong_key() -> dict[str, Any]:
 
 @app.post("/api/demo/repeated-failure")
 async def demo_repeated_failure(body: DemoIn | None = None) -> dict[str, Any]:
-    """B-4: fail the firewall N times in a row (N = alert_after_failures) -> ONE alert; then a normal run -> 'recovered'."""
+    """B-4: fail a connector N times in a row (N = alert_after_failures) -> ONE alert; then a normal run -> 'recovered'."""
     return await _demo(demo.repeated_failure, body.connector if body else None)
-
-
-@app.post("/api/demo/malformed")
-async def demo_malformed(body: DemoIn | None = None) -> dict[str, Any]:
-    """Arm one malformed record on a connector's mock, then run it: the record is quarantined."""
-    return await _demo(demo.trigger_malformed, body.connector if body else None)
-
-
-@app.post("/api/demo/bulk-export")
-async def demo_bulk_export(body: DemoIn | None = None) -> dict[str, Any]:
-    """Next AWS CloudTrail page returns ~20x volume: the exfiltration guard should pause the connector."""
-    return await _demo(demo.simulate_bulk_export, body.connector if body else None)
 
 
 @app.post("/api/demo/reset")
@@ -525,18 +506,7 @@ async def demo_reset() -> dict[str, Any]:
     state.db.delete_revoked_secrets()  # revoked demo secrets come back from .env
     bootstrap_secrets()
     for name, days in parse_age_overrides(os.environ.get("SECRET_AGE_OVERRIDES")).items():
-        state.vault.set_age(name, days)  # restore the demo's "Rotate secret" warning
-    await demo.reset_mocks(state.registry)
+        state.vault.set_age(name, days)
+    # Tickets live in the real Jira: the dedupe claims survive a reset, so re-fetched events never open a second ticket.
     removed = state.registry.reset_demo()
-    jira_cleared = False
-    # Best-effort: also clear the mock Jira board so the demo starts from SOC-1.
-    for action in state.actions.actions.values():
-        try:
-            auth = action.request.auth
-            creds = (resolve_env(auth.username), resolve_env(auth.password)) if auth.type == "basic" else None
-            async with httpx.AsyncClient(timeout=3) as client:
-                resp = await client.post(action.request.base_url.rstrip("/") + "/admin/reset", auth=creds)
-                jira_cleared = jira_cleared or resp.status_code == 200
-        except Exception:
-            pass
-    return {"ok": True, "removed_integrations": removed, "jira_cleared": jira_cleared}
+    return {"ok": True, "removed_integrations": removed}

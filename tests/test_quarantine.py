@@ -6,7 +6,7 @@ import pytest
 
 from integration_platform.engine import dry_run_integration, run_integration
 from integration_platform.normaliser import BadRecord, normalise
-from mocks import mock_cloudtrail, mock_firewall, mock_okta
+from tests.fakes import mock_cloudtrail, mock_firewall, mock_okta
 from tests.conftest import load, no_sleep, okta_config, only
 
 

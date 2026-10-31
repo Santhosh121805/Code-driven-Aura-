@@ -1,5 +1,5 @@
 # B-4: repeated-failure alert to Slack via an incoming webhook (the URL is a secret: referenced by name only).
-# Offline demo: SLACK_WEBHOOK_URL=http://localhost:9004/slack/webhook (mock Slack inbox at http://localhost:9004/slack).
+# Leave SLACK_WEBHOOK_URL empty and the alert still shows as a UI banner and a log line.
 name: slack_failure_alert
 display_name: "Slack: connector failed repeatedly / recovered"
 enabled: true

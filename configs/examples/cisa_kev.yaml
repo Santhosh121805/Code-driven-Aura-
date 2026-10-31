@@ -1,6 +1,5 @@
 # What the wizard produces when CISA KEV is added live in the demo (NOT preconfigured: copy into configs/integrations/
-# or add it via the Add Integration tab). No auth, no paging. Offline: base_url http://localhost:9001, endpoint /kev
-# serves a saved copy of the same feed from the mock.
+# or add it via the Add Integration tab). No auth, no paging.
 name: cisa_kev
 display_name: "CISA KEV"
 enabled: true
