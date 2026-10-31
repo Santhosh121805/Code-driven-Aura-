@@ -52,6 +52,18 @@ def ensure_secrets_key() -> None:
     print("Generated SECRETS_KEY in .env (master key for the encrypted secret vault).")
 
 
+def ensure_users() -> None:
+    """First run: create the admin / analyst / viewer sign-ins and show their passwords once (only hashes are stored)."""
+    sys.path.insert(0, str(ROOT))
+    from integration_platform.auth import ensure_default_users
+    created = ensure_default_users(str(ROOT / ".env"))
+    if created:
+        print("Created dashboard sign-ins (shown once; only hashes are saved in .env):")
+        for user, password in created.items():
+            print(f"  {user:<8} {password}")
+        print("Change one with: python -m integration_platform.auth set-password <user> <role>", end="\n\n")
+
+
 def load_env() -> dict[str, str]:
     """Process env + .env (process env wins)."""
     merged: dict[str, str] = {}
@@ -107,6 +119,7 @@ def main() -> int:
 
     ensure_env_file()
     ensure_secrets_key()
+    ensure_users()
     env = load_env()
     py = sys.executable
 

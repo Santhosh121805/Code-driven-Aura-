@@ -2,9 +2,9 @@
 from fastapi.testclient import TestClient
 
 from integration_platform.api import app
-from tests.conftest import OKTA_CONFIG
+from tests.conftest import OKTA_CONFIG, signed_in
 
-client = TestClient(app)
+client = signed_in(TestClient(app))
 
 
 def test_schema_endpoint_describes_streams():

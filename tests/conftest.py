@@ -34,10 +34,23 @@ for real in ("github_token", "GITHUB_OWNER", "GITHUB_REPO", "GITHUB_ORG", "okta_
              "jira_email", "jira_token", "JIRA_DOMAIN", "nvd_api_key"):
     os.environ.pop(real, None)
 
+from integration_platform import auth  # noqa: E402
+
+# Dashboard sign-ins for the API tests: one user per role, all with this password (hashed like the real .env).
+TEST_PASSWORD = "correct-horse-battery"
+os.environ["PLUGSEC_USERS"] = ",".join(f"{role}:{role}:{auth.hash_password(TEST_PASSWORD)}" for role in auth.ROLES)
+
 from integration_platform.config import parse_yaml, validate_integration  # noqa: E402
 from integration_platform.db import Database  # noqa: E402
 from integration_platform.engine import clear_oauth_cache  # noqa: E402
 from tests.fakes import mock_cloudtrail, mock_firewall, mock_jira, mock_okta  # noqa: E402
+
+
+def signed_in(client, role: str = "admin"):
+    """Sign a TestClient in as the test user for `role` (the session cookie stays on the client)."""
+    resp = client.post("/api/auth/login", json={"username": role, "password": TEST_PASSWORD})
+    assert resp.status_code == 200, resp.text
+    return client
 
 
 async def no_sleep(_: float) -> None:

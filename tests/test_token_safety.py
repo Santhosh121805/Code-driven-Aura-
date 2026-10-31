@@ -192,7 +192,7 @@ async def test_suspicious_connector_is_auto_paused_then_resumed(registry, db):
 
 async def test_resume_accepts_the_new_volume_and_relearns_the_baseline(registry, db):
     """Real case: GitHub's first Dependabot scan jumped from 2 to 183 records per run. After a human resumes,
-    runs at the new legitimate volume must not pause the connector again; a later 20x jump still does."""
+    runs at the new legitimate volume must not pause the connector again; a later >5x jump still does."""
     for i in range(3):
         registry.transport = volume(12, i * 100)
         await registry.run_now("aws_cloudtrail")
@@ -203,7 +203,7 @@ async def test_resume_accepts_the_new_volume_and_relearns_the_baseline(registry,
         registry.transport = volume(240, 5000)  # same full listing every run, like Dependabot alerts
         assert (await registry.run_now("aws_cloudtrail"))["status"] == "success"
     assert db.baseline_counts("aws_cloudtrail", 10) == [240, 240, 240]
-    registry.transport = volume(240 * 20, 9000)
+    registry.transport = volume(1300, 9000)  # > 5x the new baseline of 240
     assert (await registry.run_now("aws_cloudtrail"))["status"] == "suspicious"
 
 

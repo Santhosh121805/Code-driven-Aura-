@@ -110,6 +110,15 @@ CREATE TABLE IF NOT EXISTS action_results (
     attempts INTEGER DEFAULT 1,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at TEXT NOT NULL,
+    user TEXT NOT NULL,
+    role TEXT,
+    action TEXT NOT NULL,
+    target TEXT,
+    outcome TEXT NOT NULL
+);
 """
 DATA_TABLES = ("users", "devices", "events", "integration_runs", "sync_state", "action_dedupe", "action_results",
                "quarantine", "connector_state", "failure_alerts", "notifications")
@@ -175,8 +184,11 @@ class Database:
             self._conn.commit()
         return "updated" if exists else "new"
 
+    SEARCH_COLUMNS = {"event": ("id", "type", "description", "host", "src_ip", "dst_ip", "user", "ticket_key"),
+                      "user": ("id", "name", "email", "status"), "device": ("id", "hostname", "ip", "os", "owner")}
+
     def list_records(self, entity: str, source: str | None = None, severity: str | None = None, type_: str | None = None,
-                     limit: int = 50, offset: int = 0) -> tuple[list[dict], int]:
+                     limit: int = 50, offset: int = 0, q: str | None = None, since: str | None = None) -> tuple[list[dict], int]:
         table = TABLES[entity]
         where, params = [], []
         if source:
@@ -185,6 +197,13 @@ class Database:
             where.append("severity = ?"); params.append(severity)
         if type_ and entity == "event":
             where.append("type = ?"); params.append(type_)
+        if q:  # free-text search over the readable columns
+            cols = self.SEARCH_COLUMNS[entity]
+            where.append("(" + " OR ".join(f"{c} LIKE ? ESCAPE '!'" for c in cols) + ")")
+            needle = "%" + q.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
+            params += [needle] * len(cols)
+        if since and entity == "event":
+            where.append("timestamp >= ?"); params.append(since)
         clause = f"WHERE {' AND '.join(where)}" if where else ""
         order = {"event": "timestamp DESC, row_id DESC", "user": "fetched_at DESC, name", "device": "fetched_at DESC, hostname"}[entity]
         total = self._one(f"SELECT COUNT(*) AS n FROM {table} {clause}", params)["n"]
@@ -211,6 +230,19 @@ class Database:
         out["by_severity"] = {r["severity"]: r["n"] for r in self._all("SELECT severity, COUNT(*) AS n FROM events GROUP BY severity")}
         out["tickets"] = self._one("SELECT COUNT(*) AS n FROM events WHERE ticket_key IS NOT NULL")["n"]
         return out
+
+    def counts_since(self, since: str) -> dict[str, Any]:
+        """Events by severity and tickets for events that happened at or after `since` (ISO 8601 UTC)."""
+        by_sev = {r["severity"]: r["n"] for r in self._all("SELECT severity, COUNT(*) AS n FROM events WHERE timestamp >= ? GROUP BY severity", (since,))}
+        tickets = self._one("SELECT COUNT(*) AS n FROM events WHERE timestamp >= ? AND ticket_key IS NOT NULL", (since,))["n"]
+        return {"events": sum(by_sev.values()), "by_severity": by_sev, "tickets": tickets, "since": since}
+
+    def quarantined_total(self) -> int:
+        return self._one("SELECT COUNT(*) AS n FROM quarantine")["n"]
+
+    def severity_counts(self, source: str, stream: str) -> dict[str, int]:
+        return {r["severity"]: r["n"] for r in self._all(
+            "SELECT severity, COUNT(*) AS n FROM events WHERE source = ? AND stream = ? GROUP BY severity", (source, stream))}
 
     def source_counts(self, source: str) -> dict[str, int]:
         return {table: self._one(f"SELECT COUNT(*) AS n FROM {table} WHERE source = ?", (source,))["n"] for table in TABLES.values()}
@@ -363,6 +395,14 @@ class Database:
 
     def action_stats(self, action: str) -> dict[str, Any]:
         return self._one("SELECT COALESCE(SUM(status='success'),0) AS success, COALESCE(SUM(status='failed'),0) AS failed FROM action_results WHERE action = ?", (action,))
+
+    # ------------------------------------------------------------ audit (who did what; never cleared by a demo reset)
+    def add_audit(self, user: str, role: str | None, action: str, target: str | None, outcome: str) -> None:
+        self._exec("INSERT INTO audit_log (at, user, role, action, target, outcome) VALUES (?, ?, ?, ?, ?, ?)",
+                   (utcnow(), user, role, action, target, outcome))
+
+    def list_audit(self, limit: int = 200) -> list[dict[str, Any]]:
+        return self._all("SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,))
 
     # ------------------------------------------------------------ demo
     def reset(self) -> None:

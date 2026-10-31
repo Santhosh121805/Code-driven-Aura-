@@ -10,8 +10,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -25,7 +26,7 @@ ENV_FILE = os.environ.get("INTEGRATION_HUB_ENV_FILE", str(ROOT / ".env"))  # tes
 if ENV_FILE:
     load_dotenv(ENV_FILE, override=False)  # before anything reads secrets
 
-from integration_platform import ai_mapper, demo, logmask  # noqa: E402
+from integration_platform import ai_mapper, auth, demo, logmask  # noqa: E402
 from integration_platform.actions import ActionRunner  # noqa: E402
 from integration_platform.alerts import FailureAlerter  # noqa: E402
 from integration_platform.db import TABLES, Database  # noqa: E402
@@ -96,6 +97,91 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 @app.exception_handler(ConfigError)
 async def _config_error(_, exc: ConfigError) -> JSONResponse:
     return JSONResponse({"ok": False, "stage": "validation", "errors": exc.errors}, status_code=422)
+
+
+# ------------------------------------------------------------------ sign-in, roles, audit
+PUBLIC_API = {"/api/auth/login", "/api/auth/logout"}
+AUDIT_SKIP = {"/api/integrations/validate", "/api/convert"}  # pure computations: no state change, no outbound call
+AUDIT_LABELS = {
+    ("POST", "/api/integrations"): "Created integration", ("PUT", "/api/integrations/{name}"): "Updated integration",
+    ("DELETE", "/api/integrations/{name}"): "Deleted integration", ("POST", "/api/integrations/{name}/enable"): "Enabled integration",
+    ("POST", "/api/integrations/{name}/disable"): "Disabled integration", ("POST", "/api/integrations/{name}/resume"): "Resumed integration",
+    ("POST", "/api/integrations/{name}/revoke"): "Revoked secrets", ("POST", "/api/integrations/{name}/run"): "Ran integration",
+    ("POST", "/api/integrations/test"): "Tested connection", ("POST", "/api/integrations/sample"): "Fetched sample",
+    ("POST", "/api/secrets"): "Stored secret", ("POST", "/api/ai/suggest-mapping"): "Suggested mapping",
+    ("POST", "/api/demo/network-off"): "Demo: network off", ("POST", "/api/demo/wrong-key"): "Demo: wrong key",
+    ("POST", "/api/demo/repeated-failure"): "Demo: repeated failure", ("POST", "/api/demo/reset"): "Reset demo",
+}
+
+
+def _audit(user: str, role: str | None, action: str, target: str | None, outcome: str) -> None:
+    try:
+        state.db.add_audit(user, role, action, target, outcome)
+    except Exception:  # auditing must never break the request (e.g. DB not ready in a unit test)
+        log.exception("could not write audit entry")
+
+
+@app.middleware("http")
+async def require_sign_in(request: Request, call_next):
+    path = request.url.path
+    if not path.startswith("/api/") or path in PUBLIC_API:
+        return await call_next(request)
+    session = auth.read_session(request.cookies.get(auth.COOKIE))
+    if session is None:
+        return JSONResponse({"detail": "Not signed in"}, status_code=401)
+    needed = auth.required_role(request.method, path)
+    if not auth.allowed(session["role"], needed):
+        _audit(session["user"], session["role"], f"{request.method} {path}", None, f"denied ({needed} only)")
+        return JSONResponse({"detail": f"{needed.capitalize()} role required"}, status_code=403)
+    request.state.session = session
+    response = await call_next(request)
+    if request.method not in ("GET", "HEAD") and path not in AUDIT_SKIP:
+        route = request.scope.get("route")
+        template = getattr(route, "path", path)
+        label = AUDIT_LABELS.get((request.method, template), f"{request.method} {template}")
+        target = request.scope.get("path_params", {}).get("name")  # filled in by the router during call_next
+        _audit(session["user"], session["role"], label, target, "ok" if response.status_code < 400 else f"failed ({response.status_code})")
+    return response
+
+
+class LoginIn(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/api/auth/login")
+def login(body: LoginIn, request: Request, response: Response) -> dict[str, Any]:
+    client = request.client.host if request.client else "unknown"
+    if auth.throttled(client):
+        raise HTTPException(429, "Too many failed sign-ins. Wait a minute and try again.")
+    role = auth.authenticate(body.username, body.password)
+    if role is None:
+        auth.note_failure(client)
+        _audit(body.username[:64] or "?", None, "Sign-in failed", None, "denied")
+        raise HTTPException(401, "Wrong username or password")
+    response.set_cookie(auth.COOKIE, auth.issue_session(body.username, role), max_age=auth.SESSION_SECONDS,
+                        httponly=True, samesite="lax", secure=request.url.scheme == "https", path="/")
+    _audit(body.username, role, "Signed in", None, "ok")
+    return {"user": body.username, "role": role}
+
+
+@app.post("/api/auth/logout")
+def logout(request: Request, response: Response) -> dict[str, Any]:
+    session = auth.read_session(request.cookies.get(auth.COOKIE))
+    if session:
+        _audit(session["user"], session["role"], "Signed out", None, "ok")
+    response.delete_cookie(auth.COOKIE, path="/")
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+def me(request: Request) -> dict[str, Any]:
+    return request.state.session
+
+
+@app.get("/api/audit")
+def audit_log(limit: int = Query(200, ge=1, le=1000)) -> dict[str, Any]:
+    return {"items": state.db.list_audit(limit)}
 
 
 # ------------------------------------------------------------------ helpers
@@ -205,6 +291,44 @@ def index() -> FileResponse:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+_repo_cache: dict[str, Any] = {}
+REPO_CACHE_SECONDS = 300
+
+
+@app.get("/api/integrations/github/repo")
+async def github_repo() -> dict[str, Any]:
+    """Repository card for the GitHub integration: name, description, topics, language (GitHub API, read-only,
+    cached 5 min) + Dependabot alert counts by severity from the store."""
+    cfg = state.registry.integrations.get("github")
+    if cfg is None:
+        raise HTTPException(404, "No GitHub integration")
+    counts = state.db.severity_counts("github", "dependabot_alerts")
+    try:
+        owner, repo = resolve_env("${GITHUB_OWNER}"), resolve_env("${GITHUB_REPO}")
+        token = resolve_env(cfg.auth.token) if cfg.auth.type == "bearer" else None
+    except MissingSecretError as exc:
+        return {"configured": False, "error": str(exc), "dependabot": counts}
+    key = f"{owner}/{repo}"
+    cached = _repo_cache.get(key)
+    if cached and cached["at"] > datetime.now(timezone.utc) - timedelta(seconds=REPO_CACHE_SECONDS):
+        return {**cached["data"], "dependabot": counts}
+    headers = {**cfg.headers, **({"Authorization": f"Bearer {token}"} if token else {})}
+    try:
+        async with httpx.AsyncClient(timeout=10, transport=state.registry.transport) as client:
+            resp = await client.get(f"{cfg.base_url.rstrip('/')}/repos/{owner}/{repo}", headers=headers)
+    except httpx.HTTPError as exc:
+        return {"configured": True, "error": f"GitHub unreachable: {type(exc).__name__}", "full_name": key, "dependabot": counts}
+    if resp.status_code != 200:
+        return {"configured": True, "error": f"GitHub returned HTTP {resp.status_code}", "full_name": key, "dependabot": counts}
+    d = resp.json()
+    data = {"configured": True, "full_name": d.get("full_name") or key, "description": d.get("description"),
+            "topics": d.get("topics") or [], "language": d.get("language"), "stars": d.get("stargazers_count", 0),
+            "private": d.get("private"), "html_url": d.get("html_url"), "default_branch": d.get("default_branch"),
+            "pushed_at": d.get("pushed_at")}
+    _repo_cache[key] = {"at": datetime.now(timezone.utc), "data": data}
+    return {**data, "dependabot": counts}
 
 
 @app.get("/api/schema")
@@ -401,25 +525,31 @@ def store_secret(body: SecretIn) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------ common-schema data (one place, FR-11)
-def _records(entity: str, source: str | None, severity: str | None, type_: str | None, limit: int, offset: int) -> dict[str, Any]:
-    items, total = state.db.list_records(entity, source or None, severity or None, type_ or None, limit, offset)
+def _records(entity: str, source: str | None, severity: str | None, type_: str | None, limit: int, offset: int,
+             q: str | None = None, since: str | None = None) -> dict[str, Any]:
+    items, total = state.db.list_records(entity, source or None, severity or None, type_ or None, limit, offset,
+                                         q=(q or "").strip() or None, since=since or None)
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
 @app.get("/api/events")
 def list_events(source: str | None = None, severity: str | None = None, type: str | None = None,  # noqa: A002
-                limit: int = Query(50, ge=1, le=500), offset: int = Query(0, ge=0)) -> dict[str, Any]:
-    return _records("event", source, severity, type, limit, offset)
+                limit: int = Query(50, ge=1, le=500), offset: int = Query(0, ge=0),
+                q: str | None = Query(None, max_length=200), since: str | None = None) -> dict[str, Any]:
+    """`q` searches id/type/description/host/IPs/user/ticket; `since` (ISO 8601 UTC) keeps events at or after it."""
+    return _records("event", source, severity, type, limit, offset, q, since)
 
 
 @app.get("/api/users")
-def list_users(source: str | None = None, limit: int = Query(50, ge=1, le=500), offset: int = Query(0, ge=0)) -> dict[str, Any]:
-    return _records("user", source, None, None, limit, offset)
+def list_users(source: str | None = None, limit: int = Query(50, ge=1, le=500), offset: int = Query(0, ge=0),
+               q: str | None = Query(None, max_length=200)) -> dict[str, Any]:
+    return _records("user", source, None, None, limit, offset, q)
 
 
 @app.get("/api/devices")
-def list_devices(source: str | None = None, limit: int = Query(50, ge=1, le=500), offset: int = Query(0, ge=0)) -> dict[str, Any]:
-    return _records("device", source, None, None, limit, offset)
+def list_devices(source: str | None = None, limit: int = Query(50, ge=1, le=500), offset: int = Query(0, ge=0),
+                 q: str | None = Query(None, max_length=200)) -> dict[str, Any]:
+    return _records("device", source, None, None, limit, offset, q)
 
 
 @app.get("/api/stats")
@@ -427,9 +557,10 @@ def stats() -> dict[str, Any]:
     counts = state.db.counts()
     integrations = list(state.registry.integrations.values())
     connected = sum(1 for c in integrations if c.enabled and _health(c)["status"] in ("healthy", "degraded", "partial"))
+    since = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
     return {**counts, "critical": counts["by_severity"].get("critical", 0), "high": counts["by_severity"].get("high", 0),
             "tools_connected": connected, "tools_total": len(integrations), "entities": list(ENTITIES),
-            "tables": list(TABLES.values())}
+            "tables": list(TABLES.values()), "last_24h": state.db.counts_since(since), "quarantined": state.db.quarantined_total()}
 
 
 @app.get("/api/notifications")
