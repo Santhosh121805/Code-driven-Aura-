@@ -1,4 +1,4 @@
-# MOCK source for the demo controls only (429 + Retry-After, malformed record, bulk export).
+# MOCK source for the demo controls only (429 + Retry-After, malformed record, bulk export) and mock device inventory.
 # Served by the platform itself (integration_platform/demo_mock.py). Disabled on purpose: it is never scheduled and
 # runs only when a demo control fires. Every record it produces is labelled "Mock".
 name: demo_mock
@@ -23,3 +23,14 @@ streams:
       description: "join(' ', ['[Mock]', message])"
       user: "user"
       src_ip: "src_ip"
+  - name: devices                 # mock device inventory (the only device source; labelled Mock)
+    entity: device
+    endpoint: "/devices"
+    records_path: "results"
+    mapping:
+      id: "mac"
+      hostname: "hostname"
+      ip: "ipv4_address"
+      os: "join(' ', [os_name, os_version])"
+      owner: "user"
+      last_seen: "last_seen"

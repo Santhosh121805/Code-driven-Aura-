@@ -37,7 +37,7 @@ def test_mock_is_off_by_default_and_labelled():
 
 async def test_two_429s_then_recovered(registry):
     r = await demo.trigger_429(registry)
-    assert (r["status"], r["retries"], r["records_fetched"]) == ("success", 2, 12)
+    assert (r["status"], r["retries"], r["records_fetched"]) == ("success", 2, 12 + 10)  # events + mock devices
 
 
 async def test_retry_after_waits_exactly_5s(registry):
@@ -48,7 +48,7 @@ async def test_retry_after_waits_exactly_5s(registry):
 
 async def test_malformed_record_is_quarantined_and_run_continues(registry, db):
     r = await demo.trigger_malformed(registry)
-    assert (r["status"], r["quarantined"], r["records_new"]) == ("success", 1, 11)
+    assert (r["status"], r["quarantined"], r["records_new"]) == ("success", 1, 11 + 10)  # 11 events + 10 mock devices
     assert db.list_quarantine("demo_mock")[0]["reason"].startswith("unparseable time")
 
 
@@ -73,3 +73,10 @@ def test_reset_keeps_the_mock_but_never_enables_it(registry):
     registry.integrations["demo_mock"] = registry.integrations["demo_mock"].model_copy(update={"enabled": False})
     registry.reset_demo()
     assert "demo_mock" in registry.integrations and registry.integrations["demo_mock"].enabled is False
+
+
+async def test_mock_device_inventory_fills_the_devices_table(registry, db):
+    await registry.run_now("demo_mock", wait=True)
+    await registry.run_now("demo_mock", wait=True)  # re-runs update the same devices
+    devices, total = db.list_records("device", "demo_mock")
+    assert total == 10 and all(d["hostname"] and d["ip"] and d["os"] and d["owner"] and d["last_seen"] for d in devices)

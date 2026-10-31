@@ -8,6 +8,7 @@ exfiltration guard's critical alert can open a ticket.
 """
 from __future__ import annotations
 
+import hashlib
 import itertools
 import threading
 from datetime import datetime, timedelta, timezone
@@ -76,3 +77,25 @@ def events(page: int = Query(1, ge=1), page_size: int = Query(PAGE_SIZE, ge=1, l
     if page == 1 and _take("malformed") is not None:
         records[1]["time"] = "yesterday-ish"  # unparseable: quarantined, the rest of the run is stored
     return JSONResponse({"source": "Demo source (Mock)", "page": page, "total_pages": PAGES, "results": records})
+
+
+HOSTNAMES = ["fin-laptop-01", "hr-laptop-07", "eng-ws-12", "eng-ws-19", "db-prod-02", "web-prod-01", "jump-host", "build-runner-3",
+             "mkt-laptop-04", "ceo-macbook"]
+OSES = [("Windows", "11 23H2"), ("Ubuntu", "22.04"), ("macOS", "14.5"), ("Windows Server", "2022")]
+
+
+def _device(i: int, now: datetime) -> dict[str, Any]:
+    """Stable identity per host (re-runs update, not duplicate); a fresh last_seen each time."""
+    host = HOSTNAMES[i]
+    digest = hashlib.md5(host.encode()).hexdigest()
+    os_name, os_version = OSES[int(digest[:2], 16) % len(OSES)]
+    return {"mac": ":".join(digest[j:j + 2] for j in range(0, 12, 2)), "hostname": host,
+            "ipv4_address": f"10.20.{int(digest[2:4], 16)}.{int(digest[4:6], 16) % 250 + 2}", "os_name": os_name,
+            "os_version": os_version, "user": USERS[i % len(USERS)],
+            "last_seen": (now - timedelta(minutes=int(digest[6:8], 16) % 90)).strftime("%Y-%m-%dT%H:%M:%SZ")}
+
+
+@router.get("/devices")
+def devices() -> JSONResponse:
+    now = datetime.now(timezone.utc)
+    return JSONResponse({"source": "Demo source (Mock)", "results": [_device(i, now) for i in range(len(HOSTNAMES))]})

@@ -111,8 +111,9 @@ async def test_mock_lacework_template_end_to_end_with_session_login(db, lacework
     assert events["103"]["severity"] == "critical" and events["101"]["description"] == "Root account used"
     start, end = mock_lacework.state["queries"][0]
     assert start < end and start.endswith("Z")  # first run: the last day
+    first_sync = db.get_last_sync("lacework_forticnapp:alerts")
     await run_integration(cfg, db, transport=transport, sleep=no_sleep)
-    assert mock_lacework.state["logins"] == 1 and mock_lacework.state["queries"][1][0] == db.get_last_sync("lacework_forticnapp:alerts")
+    assert mock_lacework.state["logins"] == 1 and mock_lacework.state["queries"][1][0] == first_sync  # incremental window
 
 
 async def test_mock_lacework_wrong_secret_fails_at_login(db, lacework_env, monkeypatch):

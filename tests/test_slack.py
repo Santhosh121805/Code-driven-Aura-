@@ -9,7 +9,7 @@ from integration_platform.actions import ActionRunner
 from integration_platform.alerts import FailureAlerter
 from tests.conftest import load, no_sleep
 
-HOOK = "https://hooks.slack.com/services/TFAKE/BFAKE/fake-secret-path-123"
+HOOK = "https://hooks.example.test/services/TFAKE/BFAKE/fake-secret-path-123"  # fake; not the Slack domain (git hygiene)
 FAIL = {"status": "error", "error": 'events: HTTP 500 from https://api.example.test/logs: {"msg": "boom"} - FAILED after 3 retries'}
 OK = {"status": "success"}
 
@@ -120,4 +120,4 @@ async def test_the_webhook_url_never_appears_in_messages_banners_or_logs(db, hoo
         await a.send_test()
     stored = json.dumps(db.list_notifications(10)) + json.dumps(db.list_action_results())
     for where in (stored, caplog.text, json.dumps(slack.posts)):
-        assert "fake-secret-path-123" not in where and "hooks.slack.com/services/TFAKE" not in where
+        assert "fake-secret-path-123" not in where and "hooks.example.test/services/TFAKE" not in where

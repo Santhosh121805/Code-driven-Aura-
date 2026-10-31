@@ -103,8 +103,8 @@ async def trigger_malformed(registry: Registry) -> dict[str, Any]:
     return await registry.run_now(name, wait=True, prepare=lambda: _arm(demo_mock.arm, "malformed"))
 
 
-async def simulate_bulk_export(registry: Registry, multiplier: int = 20) -> dict[str, Any]:
-    """Next page returns ~20x normal volume, as a stolen token doing a bulk export would: the exfiltration guard
+async def simulate_bulk_export(registry: Registry, multiplier: int = 50) -> dict[str, Any]:
+    """Next page returns ~50x normal volume, as a stolen token doing a bulk export would: the exfiltration guard
     pauses the mock and raises a critical alert (which opens a ticket). Warms the baseline with normal runs first."""
     from integration_platform import demo_mock
     name = _require_mock(registry)
