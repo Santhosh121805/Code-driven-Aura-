@@ -138,6 +138,74 @@ def test_llm_failure_falls_back(monkeypatch):
     assert r["mapping"]["id"] == "uuid"
 
 
+FAKE_SARVAM_KEY = "sk_fake_sarvam_test_key_0001"
+SARVAM_JSON = {"records_path": None, "mapping": {"id": "uuid", "description": "displayMessage", "host": "hostname.fake"},
+               "confidence": {"id": 0.95, "description": 0.9, "host": 0.8}, "notes": "okta system log"}
+# What sarvam-105b can send: reasoning (with a brace of its own) and a code fence around the JSON answer.
+SARVAM_REPLY = ("<think>Each record looks like {\"uuid\": ..., \"published\": ...}; uuid is the id.</think>\n"
+                "Sure! Here is the mapping:\n```json\n" + json.dumps(SARVAM_JSON) + "\n```\nLet me know if you need changes.")
+
+
+def sarvam(monkeypatch, *replies):
+    """Point the OpenAI-compatible path at Sarvam and answer with `replies` (status, content) in order."""
+    for k, v in {"LLM_BASE_URL": "https://api.sarvam.ai/v1", "LLM_MODEL": "sarvam-105b", "LLM_API_KEY": FAKE_SARVAM_KEY}.items():
+        monkeypatch.setenv(k, v)
+    calls, pending = [], list(replies)
+
+    def post(url, headers, timeout, json):
+        calls.append({"url": url, "headers": headers, "timeout": timeout,
+                      "reasoning": (json.get("reasoning_effort", "unset"), json.get("max_tokens"))})
+        status, content = pending.pop(0)
+        message = {"role": "assistant", "content": content, "reasoning_content": '{"mapping": {"id": "from.reasoning"}}'}
+        return ai_mapper.httpx.Response(status, json={"choices": [{"message": message}]}, request=ai_mapper.httpx.Request("POST", url))
+    monkeypatch.setattr(ai_mapper.httpx, "post", post)
+    return calls
+
+
+def test_sarvam_reply_with_reasoning_around_json(monkeypatch, caplog):
+    calls = sarvam(monkeypatch, (200, SARVAM_REPLY))
+    r = suggest_mapping(OKTA_SAMPLE, "event")
+    assert r["engine"] == "AI (Sarvam)"
+    assert calls == [{"url": "https://api.sarvam.ai/v1/chat/completions", "headers": {"Authorization": f"Bearer {FAKE_SARVAM_KEY}"},
+                      "timeout": 30.0, "reasoning": (None, 4096)}]
+    fields = {f["field"]: f for f in r["fields"]}
+    assert (fields["id"]["source"], fields["id"]["path"]) == ("ai", "uuid")    # from content, not reasoning_content
+    assert fields["host"]["status"] == "needs_manual"                         # invalid path still dropped by verification
+    assert (fields["user"]["source"], fields["user"]["path"]) == ("rules", "actor.alternateId")
+    assert FAKE_SARVAM_KEY not in caplog.text
+
+
+def test_sarvam_falls_back_to_subscription_key_header(monkeypatch):
+    calls = sarvam(monkeypatch, (401, ""), (200, SARVAM_REPLY))
+    assert suggest_mapping(OKTA_SAMPLE, "event")["engine"] == "AI (Sarvam)"
+    assert [c["headers"] for c in calls] == [{"Authorization": f"Bearer {FAKE_SARVAM_KEY}"}, {"api-subscription-key": FAKE_SARVAM_KEY}]
+
+
+def test_sarvam_reply_without_json_falls_back_to_rules(monkeypatch, caplog):
+    sarvam(monkeypatch, (200, "<think>Thinking about the mapping...</think> I could not decide."))
+    r = suggest_mapping(OKTA_SAMPLE, "event")
+    assert r["engine"] == "Rule-based fallback" and "no JSON object" in r["fallback_reason"]
+    assert r["mapping"]["id"] == "uuid"
+    assert FAKE_SARVAM_KEY not in caplog.text + r["fallback_reason"]
+
+
+def test_kev_ai_answer_with_empty_paths_and_free_text_severity(monkeypatch, caplog):
+    """What sarvam-105b really answered for CISA KEV: "" for unmapped fields, severity on a free-text field."""
+    kev = json.loads((ROOT / "mocks/data/kev.json").read_text(encoding="utf-8"))
+    kev["vulnerabilities"] = kev["vulnerabilities"][:20]
+    answer = {"records_path": "vulnerabilities",
+              "mapping": {"id": "cveID", "severity": "requiredAction", "timestamp": "dateAdded", "src_ip": "", "dst_ip": ""},
+              "severity_map": {"Unknown": "info", "No": "low", "Yes": "high"}}
+    sarvam(monkeypatch, (200, json.dumps(answer)))
+    r = suggest_mapping(kev, "event")
+    fields = {f["field"]: f for f in r["fields"]}
+    assert r["engine"] == "AI (Sarvam)" and fields["id"]["source"] == "ai"
+    assert fields["src_ip"]["note"] == "No matching field found"           # "" = not mapped, not "invalid JMESPath"
+    assert "severity" not in r["mapping"] and r["default_severity"] == "high"
+    assert r["severity_map"] == {}                                          # the AI map was for another field
+    assert FAKE_SARVAM_KEY not in caplog.text
+
+
 def test_masking_before_llm():
     masked = mask({"actor": {"alternateId": "kavya.iyer@mitigata-demo.in"}, "api_token": "short",
                    "session_blob": "x", "hash": "Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MGFiY2RlZg==", "host": "finance-pc-07",

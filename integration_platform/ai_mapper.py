@@ -2,7 +2,7 @@
 
 1. Deterministic pre-processing: flatten, detect records_path, pagination hints, time format.
 2. Mask secrets / personal data before anything leaves the machine.
-3. Optional LLM suggestion (Anthropic SDK, or any OpenAI-compatible endpoint), 10 s timeout.
+3. Optional LLM suggestion (Anthropic SDK, or any OpenAI-compatible endpoint such as Sarvam), 10 s timeout (30 s for Sarvam).
 4. Verify every suggested path against the sample with JMESPath.
 5. Offline rule-based fallback (always available, also fills gaps the LLM left).
 """
@@ -17,11 +17,14 @@ from typing import Any
 import httpx
 import jmespath
 
+from integration_platform import logmask
 from integration_platform.config import ENTITY_FIELDS, SEVERITIES, TIME_FIELD
 from integration_platform.normaliser import parse_time
 
 log = logging.getLogger("ai_mapper")
 LLM_TIMEOUT = 10.0
+SARVAM_TIMEOUT = 30.0  # sarvam-105b reasons before it answers
+THINK_BLOCK = re.compile(r"<think>.*?</think>", re.S | re.I)
 CVE_ID = re.compile(r"^CVE-\d{4}-\d{4,}$")
 IPV4 = re.compile(r"^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)$")
 EMAIL = re.compile(r"^[\w.+-]+@[\w-]+(\.[\w-]+)+$")
@@ -425,10 +428,24 @@ def llm_provider() -> str | None:
 
 
 def _extract_json(text: str) -> dict[str, Any]:
-    start, end = text.find("{"), text.rfind("}")
-    if start < 0 or end <= start:
+    """The JSON object in a model reply, ignoring reasoning text, <think> blocks and code fences around it."""
+    text = THINK_BLOCK.sub("", text or "")
+    decoder = json.JSONDecoder()
+    found: list[dict[str, Any]] = []
+    i = text.find("{")
+    while i >= 0:
+        try:
+            obj, end = decoder.raw_decode(text, i)
+        except json.JSONDecodeError:
+            i = text.find("{", i + 1)
+            continue
+        if isinstance(obj, dict):
+            found.append(obj)
+        i = text.find("{", end)
+    if not found:
         raise ValueError("LLM reply contained no JSON object")
-    return json.loads(text[start:end + 1])
+    # Prefer the answer over braces quoted in the reasoning ("a record looks like {...}").
+    return next((obj for obj in reversed(found) if "mapping" in obj), found[-1])
 
 
 def _call_anthropic(prompt: str) -> tuple[dict[str, Any], str]:
@@ -454,13 +471,26 @@ def _call_anthropic(prompt: str) -> tuple[dict[str, Any], str]:
 def _call_openai_compatible(prompt: str) -> tuple[dict[str, Any], str]:
     base = os.environ["LLM_BASE_URL"].rstrip("/")
     model = os.environ["LLM_MODEL"]
-    headers = {"Authorization": f"Bearer {os.environ['LLM_API_KEY']}"} if os.environ.get("LLM_API_KEY") else {}
-    resp = httpx.post(f"{base}/chat/completions", headers=headers, timeout=LLM_TIMEOUT, json={
-        "model": model, "temperature": 0,
-        "messages": [{"role": "system", "content": "Reply with strict JSON only."}, {"role": "user", "content": prompt}],
-    })
+    sarvam = "sarvam.ai" in base
+    key = os.environ.get("LLM_API_KEY")
+    if key:
+        logmask.remember(key)
+    # Bearer is the OpenAI convention; Sarvam's native header is api-subscription-key, tried if Bearer is rejected.
+    header_options = [{"Authorization": f"Bearer {key}"}, {"api-subscription-key": key}] if key else [{}]
+    body = {"model": model, "temperature": 0,
+            "messages": [{"role": "system", "content": "Reply with strict JSON only."}, {"role": "user", "content": prompt}]}
+    if sarvam:
+        # Thinking mode spends Sarvam's whole default 2048-token budget on reasoning and returns no content;
+        # with reasoning off it answers this extraction task in ~2 s.
+        body.update(reasoning_effort=None, max_tokens=4096)
+    for headers in header_options:
+        resp = httpx.post(f"{base}/chat/completions", headers=headers, timeout=SARVAM_TIMEOUT if sarvam else LLM_TIMEOUT, json=body)
+        if resp.status_code not in (401, 403):
+            break
     resp.raise_for_status()
-    return _extract_json(resp.json()["choices"][0]["message"]["content"]), f"openai-compatible/{model}"
+    # Reasoning models may also send reasoning_content: only the answer in content is used.
+    content = resp.json()["choices"][0]["message"].get("content") or ""
+    return _extract_json(content), "Sarvam" if sarvam else f"openai-compatible/{model}"
 
 
 def call_llm(sample: Any, records_path: str | None, examples: dict[str, list[Any]], entity: str = "event") -> tuple[dict[str, Any], str]:
@@ -514,9 +544,12 @@ def verify_suggestion(suggestion: dict[str, Any], sample: Any, detected_records_
     fields: dict[str, dict[str, Any]] = {}
     raw_mapping = suggestion.get("mapping") or {}
     raw_conf = suggestion.get("confidence") or {}
+    severity_map = {str(k): v for k, v in (suggestion.get("severity_map") or {}).items() if v in SEVERITIES}
     for field, path in raw_mapping.items():
         if field not in ENTITY_FIELDS[entity]:
             notes.append(f"Ignored unknown field '{field}'.")
+            continue
+        if path in (None, ""):  # some models answer "" instead of omitting the field: not mapped, rules fill it
             continue
         conf = float(raw_conf.get(field, 0.7)) if isinstance(raw_conf.get(field, 0.7), (int, float)) else 0.7
         entry = {"field": field, "path": path, "confidence": round(max(0.0, min(conf, 1.0)), 2), "source": "ai", "status": "ok", "note": ""}
@@ -528,6 +561,9 @@ def verify_suggestion(suggestion: dict[str, Any], sample: Any, detected_records_
         present = [v for v in values if v not in (None, "")]
         if entry["status"] == "ok" and not present:
             entry.update(status="needs_manual", path="", confidence=0.0, note=f"Path '{path}' does not exist in the sample")
+        elif field == "severity" and not any(str(v).lower() in SEVERITIES or str(v) in severity_map for v in present):
+            # The path exists but holds free text (e.g. KEV requiredAction): no value is a severity or a severity_map key.
+            entry.update(status="needs_manual", path="", confidence=0.0, note=f"Values like {str(present[0])[:60]!r} are not severities")
         elif entry["status"] == "ok":
             entry["example"] = present[0]
             mismatch = (
@@ -542,7 +578,6 @@ def verify_suggestion(suggestion: dict[str, Any], sample: Any, detected_records_
                 entry["note"] = f"Value {present[0]!r} doesn't look like a {field}"
         fields[field] = entry
 
-    severity_map = {str(k): v for k, v in (suggestion.get("severity_map") or {}).items() if v in SEVERITIES}
     time_format = suggestion.get("time_format") if suggestion.get("time_format") in ("iso8601", "epoch_s", "epoch_ms") else None
     if suggestion.get("notes"):
         notes.append(str(suggestion["notes"]))
@@ -581,8 +616,8 @@ def suggest_mapping(sample: Any, entity: str = "event", use_llm: bool = True, li
             verified = verify_suggestion(suggestion, sample, detected_path, entity)
             engine = f"AI ({model_label})"
         except Exception as exc:  # timeout, no internet, bad JSON, missing SDK... -> rules
-            log.warning("LLM mapping failed, using rules: %s", exc)
-            fallback_reason = f"LLM unavailable ({type(exc).__name__}: {str(exc)[:120]})"
+            log.warning("LLM mapping failed, using rules: %s", logmask.mask_text(str(exc)))
+            fallback_reason = logmask.mask_text(f"LLM unavailable ({type(exc).__name__}: {str(exc)[:120]})")
 
     records_path = verified["records_path"] if verified else detected_path
     fields: dict[str, dict[str, Any]] = dict(verified["fields"]) if verified else {}
@@ -620,7 +655,10 @@ def suggest_mapping(sample: Any, entity: str = "event", use_llm: bool = True, li
     severity_map: dict[str, str] = {}
     if entity == "event":
         sev_path = fields["severity"]["path"]
-        severity_map = (verified or {}).get("severity_map") or suggest_severity_map(examples.get(sev_path, []) if sev_path else [])
+        # An AI severity_map is only trusted if verification did not reject the AI's own severity path.
+        ai_sev_rejected = ((verified or {}).get("fields", {}).get("severity") or {}).get("status") == "needs_manual"
+        ai_map = None if ai_sev_rejected else (verified or {}).get("severity_map")
+        severity_map = ai_map or suggest_severity_map(examples.get(sev_path, []) if sev_path else [])
     time_path = fields[time_field]["path"]
     time_format = (verified or {}).get("time_format") or detect_time_format(examples.get(time_path, [])) or "iso8601"
 
