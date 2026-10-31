@@ -18,7 +18,8 @@ from integration_platform.engine import clear_oauth_cache, run_integration
 from integration_platform.vault import Vault, secret_refs
 
 log = logging.getLogger("scheduler")
-SEEDED_INTEGRATIONS = ("github", "okta", "jira", "nvd")
+SEEDED_INTEGRATIONS = ("github", "okta", "jira", "nvd", "demo_mock")
+MANUAL_ONLY = ("demo_mock",)  # kept by a reset but never re-enabled or scheduled: runs only from demo controls
 
 
 class Registry:
@@ -185,6 +186,10 @@ class Registry:
             self.remove(name)
         self.db.reset()
         for name in SEEDED_INTEGRATIONS:
+            if name in MANUAL_ONLY:
+                if name in self.integrations and self.integrations[name].enabled:
+                    self.set_enabled(name, False)
+                continue
             if name in self.integrations:
                 if not self.integrations[name].enabled:
                     self.set_enabled(name, True)

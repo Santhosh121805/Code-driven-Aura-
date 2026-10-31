@@ -68,3 +68,54 @@ async def wrong_key(registry: Registry) -> dict[str, Any]:
     except EngineError as exc:
         raise DemoError(f"GitHub is unreachable: {exc}")
     return {"status": "unexpected_success", "target": cfg.base_url}
+
+
+# ---------------------------------------------------------------- controls that need the Demo source (Mock)
+def _require_mock(registry: Registry) -> str:
+    """The mock is disabled on purpose (it only runs from here), but a paused or revoked one is not silently re-run."""
+    from integration_platform import demo_mock
+    if demo_mock.NAME not in registry.integrations:
+        raise DemoError("The Demo source (Mock) is not configured (configs/integrations/demo_mock.yaml)")
+    state = registry.db.get_state(demo_mock.NAME)
+    if state and state["state"] in ("suspicious", "revoked"):
+        raise DemoError(f"Demo source (Mock) is {state['state']}: resume it (or reset the demo) first")
+    return demo_mock.NAME
+
+
+async def trigger_429(registry: Registry) -> dict[str, Any]:
+    """Exactly two HTTP 429s on the next run of the mock, then success: 'Recovered after 2 retries'."""
+    from integration_platform import demo_mock
+    name = _require_mock(registry)
+    return await registry.run_now(name, wait=True, prepare=lambda: _arm(demo_mock.arm, "rate_limit", count=2, retry_after=1))
+
+
+async def trigger_retry_after(registry: Registry, seconds: int = 5) -> dict[str, Any]:
+    """One HTTP 429 with Retry-After: 5: the run visibly waits 5 s, then succeeds."""
+    from integration_platform import demo_mock
+    name = _require_mock(registry)
+    return await registry.run_now(name, wait=True, prepare=lambda: _arm(demo_mock.arm, "rate_limit", count=1, retry_after=seconds))
+
+
+async def trigger_malformed(registry: Registry) -> dict[str, Any]:
+    """One record with an unparseable time in the next response: it is quarantined and the run continues."""
+    from integration_platform import demo_mock
+    name = _require_mock(registry)
+    return await registry.run_now(name, wait=True, prepare=lambda: _arm(demo_mock.arm, "malformed"))
+
+
+async def simulate_bulk_export(registry: Registry, multiplier: int = 20) -> dict[str, Any]:
+    """Next page returns ~20x normal volume, as a stolen token doing a bulk export would: the exfiltration guard
+    pauses the mock and raises a critical alert (which opens a ticket). Warms the baseline with normal runs first."""
+    from integration_platform import demo_mock
+    name = _require_mock(registry)
+    guard = registry.integrations[name].exfiltration_guard
+    warmed = 0
+    while len(registry.db.baseline_counts(name, guard.baseline_runs)) < guard.min_baseline_runs and warmed < guard.min_baseline_runs + 3:
+        await registry.run_now(name, wait=True)
+        warmed += 1
+    result = await registry.run_now(name, wait=True, prepare=lambda: _arm(demo_mock.arm, "bulk", multiplier=multiplier))
+    return {**result, "baseline_warmup_runs": warmed}
+
+
+async def _arm(fn, kind: str, **detail: Any) -> None:
+    fn(kind, **detail)

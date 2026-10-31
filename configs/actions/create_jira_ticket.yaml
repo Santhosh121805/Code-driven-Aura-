@@ -2,7 +2,8 @@ name: create_jira_ticket
 display_name: "Create Jira ticket for high/critical alerts"
 enabled: true
 # Incidents only: CVE feeds (NVD, KEV) are intel, not tickets; Jira issues are never ticketed back into Jira.
-when: { severity_in: [high, critical], source_in: [okta, github] }
+# demo_mock (Mock) events never exceed medium, so only its bulk-export guard alert (critical) opens a ticket.
+when: { severity_in: [high, critical], source_in: [okta, github, demo_mock] }
 request:
   base_url: "https://${JIRA_DOMAIN}"
   endpoint: "/rest/api/2/issue"   # v2 takes a plain-text description (v3 needs Atlassian Document Format)

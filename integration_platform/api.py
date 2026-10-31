@@ -26,7 +26,7 @@ ENV_FILE = os.environ.get("INTEGRATION_HUB_ENV_FILE", str(ROOT / ".env"))  # tes
 if ENV_FILE:
     load_dotenv(ENV_FILE, override=False)  # before anything reads secrets
 
-from integration_platform import ai_mapper, auth, demo, logmask  # noqa: E402
+from integration_platform import ai_mapper, auth, demo, demo_mock, logmask  # noqa: E402
 from integration_platform.actions import ActionRunner  # noqa: E402
 from integration_platform.alerts import FailureAlerter  # noqa: E402
 from integration_platform.db import TABLES, Database  # noqa: E402
@@ -93,6 +93,7 @@ async def lifespan(_: FastAPI):
 # docs_url/redoc_url off: /docs is our own static documentation (Swagger UI would also pull from a CDN).
 app = FastAPI(title="Config-Driven Integration Platform", version="2.0", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+app.include_router(demo_mock.router)  # /mock/events: the Demo source (Mock), read only by demo controls
 
 
 @app.exception_handler(ConfigError)
@@ -112,6 +113,8 @@ AUDIT_LABELS = {
     ("POST", "/api/secrets"): "Stored secret", ("POST", "/api/ai/suggest-mapping"): "Suggested mapping",
     ("POST", "/api/demo/network-off"): "Demo: network off", ("POST", "/api/demo/wrong-key"): "Demo: wrong key",
     ("POST", "/api/demo/repeated-failure"): "Demo: repeated failure", ("POST", "/api/demo/reset"): "Reset demo",
+    ("POST", "/api/demo/firewall-429"): "Demo: rate limit", ("POST", "/api/demo/retry-after"): "Demo: Retry-After",
+    ("POST", "/api/demo/malformed"): "Demo: malformed record", ("POST", "/api/demo/bulk-export"): "Demo: bulk export",
 }
 
 
@@ -657,6 +660,30 @@ async def _demo(fn, connector: str | None) -> dict[str, Any]:
     return {"ok": True, "result": result}
 
 
+@app.post("/api/demo/firewall-429")
+async def demo_rate_limit() -> dict[str, Any]:
+    """Two 429s on the Demo source (Mock), then success: health shows 'Recovered after 2 retries'."""
+    return await _demo(demo.trigger_429, None)
+
+
+@app.post("/api/demo/retry-after")
+async def demo_retry_after() -> dict[str, Any]:
+    """One 429 with Retry-After: 5 on the Demo source (Mock): the run waits 5 s, then succeeds."""
+    return await _demo(demo.trigger_retry_after, None)
+
+
+@app.post("/api/demo/malformed")
+async def demo_malformed() -> dict[str, Any]:
+    """One malformed record from the Demo source (Mock): it is quarantined, the run continues."""
+    return await _demo(demo.trigger_malformed, None)
+
+
+@app.post("/api/demo/bulk-export")
+async def demo_bulk_export() -> dict[str, Any]:
+    """~20x volume from the Demo source (Mock): the exfiltration guard pauses it and raises a critical alert + ticket."""
+    return await _demo(demo.simulate_bulk_export, None)
+
+
 @app.post("/api/demo/network-off")
 async def demo_network_off(body: DemoIn | None = None) -> dict[str, Any]:
     """One run against a dead address: retries at 1s, 2s, 4s, then FAILED (recorded on the connector's health)."""
@@ -682,5 +709,6 @@ async def demo_reset() -> dict[str, Any]:
     for name, days in parse_age_overrides(os.environ.get("SECRET_AGE_OVERRIDES")).items():
         state.vault.set_age(name, days)
     # Tickets live in the real Jira: the dedupe claims survive a reset, so re-fetched events never open a second ticket.
+    demo_mock.reset()
     removed = state.registry.reset_demo()
     return {"ok": True, "removed_integrations": removed}

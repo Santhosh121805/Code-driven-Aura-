@@ -1,0 +1,25 @@
+# MOCK source for the demo controls only (429 + Retry-After, malformed record, bulk export).
+# Served by the platform itself (integration_platform/demo_mock.py). Disabled on purpose: it is never scheduled and
+# runs only when a demo control fires. Every record it produces is labelled "Mock".
+name: demo_mock
+display_name: "Demo source (Mock)"
+enabled: false
+base_url: "http://127.0.0.1:8000/mock"
+auth: { type: none }
+schedule_seconds: 900
+retry: { max_retries: 4, backoff: exponential, base_seconds: 1 }
+rate_limit: { max_wait_seconds: 30 }
+streams:
+  - name: events
+    entity: event
+    endpoint: "/events"
+    pagination: { type: page, page_param: page, size_param: page_size, page_size: 4, total_pages_path: total_pages, max_pages: 3 }
+    records_path: "results"
+    mapping:
+      id: "event_id"
+      type: "event_type"
+      severity: "severity"
+      timestamp: "time"
+      description: "join(' ', ['[Mock]', message])"
+      user: "user"
+      src_ip: "src_ip"

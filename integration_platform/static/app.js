@@ -1264,6 +1264,12 @@ function demoDrawer() {
         <button class="btn secondary sm" data-demo="wrong-key">Call GitHub with a wrong key</button></div>
       <div class="demo-item"><b>Network off</b><span class="muted sm">One GitHub run against a dead address: retries after 1 s, 2 s and 4 s, then the run fails.</span>
         <button class="btn secondary sm" data-demo="network-off">Network off mid-run</button></div>
+      <div class="demo-item"><b>Rate limit (Mock)</b><span class="muted sm">The Demo source (Mock) answers HTTP 429 with Retry-After: 5. The run waits 5 s, then succeeds.</span>
+        <button class="btn secondary sm" data-demo="retry-after">429 with Retry-After: 5</button></div>
+      <div class="demo-item"><b>Bad record (Mock)</b><span class="muted sm">One record from the Demo source (Mock) has an unreadable time. It is quarantined; the rest of the run is stored.</span>
+        <button class="btn secondary sm" data-demo="malformed">Send a malformed record</button></div>
+      <div class="demo-item"><b>Stolen token (Mock)</b><span class="muted sm">The Demo source (Mock) returns ~20x its normal volume, like a bulk export with a stolen token. The connection is paused, a critical alert is raised and a Jira ticket opens.</span>
+        <button class="btn danger sm" data-demo="bulk-export">Simulate a bulk export</button></div>
       <div class="demo-item"><b>Repeated failure</b><span class="muted sm">Three failed GitHub runs in a row send one alert; the next good run sends "recovered".</span>
         <button class="btn secondary sm" data-demo="repeated-failure">Fail 3 times, then recover</button></div>
       <div class="demo-item"><b>Reset demo</b><span class="muted sm">Clears stored records, run history and alerts, and removes integrations added during the demo. Jira tickets are never duplicated.</span>
@@ -1278,11 +1284,12 @@ async function runDemo(btn) {
       const { result: r } = await api(`/api/demo/${kind}`, { method: "POST", body: {} });
       const msg = r.status === "done" ? `${r.failed_runs} failed runs, ${r.alerts.length} alert sent${r.alerts[0] ? ` (${r.alerts[0].channels.join(", ")})` : ""}; then ${r.recovery_run}${r.recovery ? `: ${r.recovery.message}` : ""}`
         : r.status === "auth_failed" ? `${r.error} (retries: ${r.retries})`
+        : r.status === "suspicious" ? `Suspicious: ${r.suspicious.records} records vs a baseline of ${r.suspicious.baseline}. Paused, critical alert raised.`
         : r.status === "error" ? `Run failed: ${r.error}`
-        : `Run ${r.status}: ${r.records_fetched} records, ${r.retries} retries`;
+        : `Run ${r.status}: ${r.records_fetched} records, ${r.retries} retr${r.retries === 1 ? "y" : "ies"}${r.quarantined ? `, ${r.quarantined} quarantined` : ""}${(r.retry_log || []).some((l) => l.includes("waited")) ? ` (${r.retry_log.filter((l) => l.includes("waited")).join("; ")})` : ""}`;
       const box = $("#demoResult");
       box.textContent = msg;
-      box.className = `notice ${r.status === "success" || r.status === "done" ? "ok" : "warn"}`;
+      box.className = `notice ${(r.status === "success" && !r.quarantined) || r.status === "done" ? "ok" : "warn"}`;
       await loadIntegrations();
     } catch (e) { toast(errorList(e).join("; "), "err"); }
   });
