@@ -148,3 +148,18 @@ def test_github_repository_card(db, monkeypatch):
     assert calls[0].headers["Authorization"] == "Bearer test-token-not-real"
     c.get("/api/integrations/github/repo")
     assert len(calls) == 1  # cached
+
+
+def test_audit_names_what_was_saved_even_without_a_name_in_the_url(db, monkeypatch):
+    """POST /api/integrations and /api/secrets carry no {name} in the URL; the audit entry must still say what was saved."""
+    from tests.conftest import OKTA_CONFIG
+    stored = {}
+    monkeypatch.setattr(api.state, "registry", types.SimpleNamespace(integrations={}, upsert=lambda cfg: stored.update(cfg=cfg.name)), raising=False)
+    monkeypatch.setattr(api.state, "vault", types.SimpleNamespace(set=lambda n, v: None, info=lambda n: {}), raising=False)
+    monkeypatch.setattr(api, "import_secrets", lambda refs: None)
+    c = client("admin")
+    assert c.post("/api/integrations", json={"config": OKTA_CONFIG}).status_code == 201
+    assert c.post("/api/secrets", json={"name": "MY_TOOL_TOKEN", "value": "s3cr3t-value-123"}).status_code == 201
+    log = [(e["action"], e["target"]) for e in db.list_audit()]
+    assert ("Created integration", "okta_wizard") in log and ("Stored secret", "MY_TOOL_TOKEN") in log
+    assert not any("s3cr3t-value-123" in str(e) for e in db.list_audit())

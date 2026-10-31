@@ -139,8 +139,9 @@ async def require_sign_in(request: Request, call_next):
     if request.method not in ("GET", "HEAD") and path not in AUDIT_SKIP:
         route = request.scope.get("route")
         template = getattr(route, "path", path)
-        label = AUDIT_LABELS.get((request.method, template), f"{request.method} {template}")
-        target = request.scope.get("path_params", {}).get("name")  # filled in by the router during call_next
+        label = getattr(request.state, "audit_action", None) or AUDIT_LABELS.get((request.method, template), f"{request.method} {template}")
+        # {name} from the URL (filled in by the router during call_next), else what the endpoint reported
+        target = request.scope.get("path_params", {}).get("name") or getattr(request.state, "audit_target", None)
         _audit(session["user"], session["role"], label, target, "ok" if response.status_code < 400 else f"failed ({response.status_code})")
     return response
 
@@ -428,8 +429,11 @@ def get_integration(name: str) -> dict[str, Any]:
 
 
 @app.post("/api/integrations", status_code=201)
-def create_integration(body: ConfigIn, overwrite: bool = False) -> dict[str, Any]:
+def create_integration(body: ConfigIn, request: Request, overwrite: bool = False) -> dict[str, Any]:
     cfg = body.to_config()
+    request.state.audit_target = cfg.name  # no {name} in this URL: tell the audit log what was saved
+    if cfg.name in state.registry.integrations and overwrite:
+        request.state.audit_action = "Replaced integration"
     if cfg.name in state.registry.integrations and not overwrite:
         raise ConfigError([f"An integration named '{cfg.name}' already exists. Choose another name, or update it instead."])
     import_secrets(secret_refs(cfg))
@@ -553,8 +557,9 @@ def list_secrets() -> dict[str, Any]:
 
 
 @app.post("/api/secrets", status_code=201)
-def store_secret(body: SecretIn) -> dict[str, Any]:
+def store_secret(body: SecretIn, request: Request) -> dict[str, Any]:
     """Store (or rotate) a secret encrypted at rest. The value is never returned; configs reference ${NAME}."""
+    request.state.audit_target = body.name  # the name only, never the value
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", body.name) or not body.value:
         raise HTTPException(422, "name must look like MY_TOOL_TOKEN and value must not be empty")
     state.vault.set(body.name, body.value)
