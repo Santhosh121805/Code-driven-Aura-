@@ -462,3 +462,7 @@ details.raw .code { margin-top: 8px; }
 .alert-list { display: flex; flex-direction: column; }
 .alert-row { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 9px 0; border-top: 1px solid var(--border); font-size: 13px; }
 .alert-row:first-child { border-top: 0; }
+
+/* devices: online / offline presence */
+.presence { display: inline-flex; align-items: center; gap: 8px; }
+.presence .dot.ok { box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 20%, transparent); }

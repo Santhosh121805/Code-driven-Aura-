@@ -327,6 +327,13 @@ class ParentStatus(_Model):
                                       description="Checked first: text in the API's error message -> value, e.g. {not accessible: no access}")
 
 
+class NewRecordEvent(_Model):
+    """Raise an event the first time a record id is seen, e.g. "New device joined: {{ hostname }} ({{ os }})"."""
+    type: str = Field(default="new_record", min_length=1)
+    severity: Severity = "info"
+    description: str = Field(min_length=1, description="Jinja text with the record's fields, e.g. {{ hostname }}")
+
+
 class Stream(_Model):
     name: str = Field(description="Stream id within the integration, e.g. users or events")
     entity: Entity = "event"
@@ -346,6 +353,7 @@ class Stream(_Model):
     for_each: ForEach | None = Field(default=None, description="Run once per record of another stream")
     merge_into_parent: bool = Field(default=False, description="Merge the mapped fields into the parent record instead of adding rows")
     parent_status: ParentStatus | None = Field(default=None, description="Record each item's outcome in a parent field")
+    new_record_event: NewRecordEvent | None = Field(default=None, description="Raise an event when a record id appears for the first time")
 
     @model_validator(mode="before")
     @classmethod
@@ -398,6 +406,12 @@ class Stream(_Model):
                     raise ValueError(f"param {key} uses unknown variable(s) {', '.join(sorted(extra))}")
         if (self.merge_into_parent or self.parent_status) and not self.for_each:
             raise ValueError("merge_into_parent and parent_status need for_each")
+        if self.new_record_event:
+            if self.entity == "event":
+                raise ValueError("new_record_event is for users, devices and repositories (events are already events)")
+            unknown = template_variables(self.new_record_event.description) - set(allowed)
+            if unknown:
+                raise ValueError(f"new_record_event uses {', '.join(sorted(unknown))}; available: {', '.join(allowed)}")
         return self
 
     @property

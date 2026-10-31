@@ -18,7 +18,7 @@ from integration_platform.engine import clear_oauth_cache, run_integration
 from integration_platform.vault import Vault, secret_refs
 
 log = logging.getLogger("scheduler")
-SEEDED_INTEGRATIONS = ("github", "okta", "jira", "nvd", "demo_mock")
+SEEDED_INTEGRATIONS = ("github", "okta", "jira", "nvd", "tailscale", "demo_mock")
 MANUAL_ONLY = ("demo_mock",)  # kept by a reset but never re-enabled or scheduled: runs only from demo controls
 
 

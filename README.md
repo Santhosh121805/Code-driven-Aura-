@@ -13,7 +13,7 @@ It runs against **real free-tier APIs** (GitHub, Okta, Jira Cloud, NVD, CISA KEV
 | **Goal 3** Safe secrets | `config.SecretRef`, `vault.Vault` (Fernet), `logmask.MaskingFilter`, `.gitignore` | Demo step 4 |
 | **Goal 4** Reliable by default | `engine.send_with_retry` / `rate_limit_wait` / quarantine in `engine.run_integration`, the same for every connector | Demo step 3 |
 | **Goal 5** Visible health | `api._health`, Integrations tab | Demo step 5 |
-| **Goal 6** 3+ real sources | `configs/integrations/{github,okta,jira,nvd}.yaml`, plus CISA KEV added live | "Real sources" table below |
+| **Goal 6** 3+ real sources | `configs/integrations/{github,okta,jira,nvd,tailscale}.yaml`, plus CISA KEV added live | "Real sources" table below |
 | **FR-1** Auth: API key + more | `config.AuthApiKey` (with `prefix`, `optional`), `AuthBasic`, `AuthBearer`, `AuthOAuth2`; `engine.apply_auth` | Integration cards show the login type: GitHub Bearer, Okta API key (`SSWS`), Jira Basic, NVD optional API key, KEV none (OAuth2 is covered by the tests) |
 | **FR-2** Endpoints | `config.Stream.endpoint/method/params/headers`, `${VAR}` in URLs; `engine._Request`, `engine.render_params` | The card's drawer lists each stream (`users → user · Link header`) |
 | **FR-3** Pagination (2+) | `config.Pagination{Page,Offset,Cursor,Link}`; `engine.page_params`, `engine.next_link`, stop rules in `engine.fetch_records` | GitHub/Okta Link header, Jira/NVD offset, Jira issues cursor (page numbers covered by the tests) |
@@ -32,6 +32,7 @@ It runs against **real free-tier APIs** (GitHub, Okta, Jira Cloud, NVD, CISA KEV
 | **B-5** Web form -> config | `static/app.js` **Add integration** wizard with a live YAML panel (two-way) and inline field errors | Add Integration tab |
 | **Multiple endpoints per integration** | `IntegrationConfig.streams` (shared base URL, login, headers, retries, rate limits; per-stream path, paging, mapping, entity); wizard **Endpoints** step (add / duplicate / remove), per-endpoint **Mapping** tabs (fetch sample, AI suggest, path check via `POST /api/mapping/check`) and per-endpoint **Test** badges; `api._stream_status` | Demo step 3: a 2-endpoint integration built in the wizard; integration drawer lists every endpoint with records, last status, last error |
 | **for_each fan-out** (generic) | `config.ForEach`, `Stream.merge_into_parent` / `parent_status`, `IntegrationConfig.ordered_streams`; `engine.fan_out` (semaphore, per-item 403/404 skip with reasons, shared rate-limit hold), `engine.render_path` (sandboxed, parent fields only, URL-encoded); `normaliser` functions `parent()`, `base64_decode`, `first_paragraph`, `percent_map` | `tests/test_for_each.py`; GitHub languages / README / Dependabot per repository |
+| **Real device source + new-device detection** | `configs/integrations/tailscale.yaml` (config only); generic `Stream.new_record_event` (`engine.new_record_event`), JMESPath filters in `records_path` with `days_until()` | **Devices**: Tailscale (real) first in the source filter, Online / Offline · x min ago dot; **Events**: "New device joined: … by …" |
 | **All GitHub repositories** (config only) | `configs/integrations/github.yaml`: `repositories` (`/user/repos`, Link paging) + `repo_languages`, `repo_readme`, `dependabot_alerts` via `for_each`; `repository` entity + `repositories` table; `GET /api/repositories` | **Repositories** page (all roles): KPIs, filters, cards, drawer; GitHub card "N repositories · N alerts · N endpoints" |
 
 ## Real sources (Section 4): each differs in login type and paging style
@@ -43,6 +44,7 @@ It runs against **real free-tier APIs** (GitHub, Okta, Jira Cloud, NVD, CISA KEV
 | **Jira Cloud (free)** | Basic (email + API token) | Offset `startAt` / `maxResults` (issues: `/search/jql` token paging) | `/rest/api/3/users/search` -> users; issues -> events | `jira.yaml` |
 | **NVD CVE API 2.0** | Optional API key header `apiKey` | Offset `startIndex` / `resultsPerPage` / `totalResults` | CVEs -> events (severity from CVSS v3.1, falling back to v3.0, then v2) | `nvd.yaml` |
 | **CISA KEV** | None | None | KEV -> events. **Added live in the demo** | `configs/examples/cisa_kev.yaml` |
+| **Tailscale API v2** (free personal plan) | Bearer (API access token, in the vault) | None (one call returns every device) | `/api/v2/tailnet/-/devices` -> devices (every 60 s; "New device joined" event the first time a device id appears); the same response -> `update_available` (low) and `key_expiry` (medium, key expires within 7 days) events | `tailscale.yaml` |
 
 No source produces a device inventory today, so **Devices** shows an empty state until a tool with a `devices` stream is added. Fake tools exist only as test doubles in `tests/fakes/`; the platform never loads or starts them.
 
@@ -58,6 +60,10 @@ nvd_api_key=    (optional)
 ```
 
 Then click **Run now** on each card. High and critical incidents from Okta and GitHub open tickets in your Jira project `KAN` (`configs/actions/create_jira_ticket.yaml`); CVE feeds and Jira's own issues are never ticketed.
+
+### Real Tailscale run
+
+2 devices (1 Windows laptop, 1 Android phone), both with a Tailscale IP and owner; the laptop **Online**, the phone **Offline · 8 min ago** at the time of the run. The first sync raised one "New device joined" event per device; re-runs raise none. No client updates pending and no key expiring within 7 days (keys expire 2027-04-29), so those two event streams correctly returned 0.
 
 ### Real GitHub run (fine-grained token, all repositories, read-only)
 
@@ -207,7 +213,7 @@ On first run, `run_all.py` creates `.env` from `.env.example`, generates `SECRET
 
 Set `DEMO_MODE=on` in `.env` to let the sign-in card pre-fill the username for the picked role and show "Demo accounts are configured in .env". Passwords are never shown, and the role always comes from the account on the server, not from the picked tab.
 
-Tests: `python -m pytest`. There are 270 tests; they are hermetic and never read your `.env` or call real APIs.
+Tests: `python -m pytest`. There are 277 tests; they are hermetic and never read your `.env` or call real APIs.
 
 ## Sign-in, roles and audit
 
@@ -325,6 +331,6 @@ integration_platform/  config.py (models, validation, ${NAME} resolution) · eng
 configs/integrations/  github, okta, jira, nvd (real) · cisa_kev (added live)
 configs/actions/       create_jira_ticket.yaml (real Jira, project KAN) · slack_failure_alert.yaml (B-4)
 configs/examples/      cisa_kev.yaml (what the live demo creates)
-tests/                 270 tests, incl. test_access.py (roles, audit), test_public.py (public pages, sign-in) and test_git_hygiene.py
+tests/                 277 tests, incl. test_access.py (roles, audit), test_public.py (public pages, sign-in) and test_git_hygiene.py
 tests/fakes/           in-process fake tools for the tests (CloudTrail, Firewall, OAuth2 Okta, Jira) + their configs and kev.json
 ```

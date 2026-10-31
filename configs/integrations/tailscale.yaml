@@ -1,0 +1,59 @@
+# REAL source: Tailscale API v2 (free personal plan). Login: Bearer API access token (the secret is referenced by name
+# only and lives in the encrypted vault). No paging: one call returns every device of the tailnet ("-" = the token's own).
+# Three streams read the same endpoint: the device inventory, plus two event streams filtered with JMESPath.
+name: tailscale
+display_name: "Tailscale"
+enabled: true
+base_url: "https://api.tailscale.com"
+auth: { type: bearer, token: "${tailscale_token}" }
+scopes: ["devices:core:read"]          # a read-only token is enough
+schedule_seconds: 60                  # near-real-time polling: online / offline and new devices within a minute
+streams:
+  # ---- device inventory -> devices table; a device id seen for the first time raises "New device joined"
+  - name: devices
+    entity: device
+    endpoint: "/api/v2/tailnet/-/devices"
+    records_path: "devices"
+    mapping:
+      id: "nodeId || id"
+      hostname: "hostname"
+      ip: "addresses[0]"
+      os: "os"
+      owner: "user"
+      last_seen: "lastSeen"
+    new_record_event:
+      type: device_joined
+      severity: info
+      description: "New device joined: {{ hostname }} ({{ os }}) by {{ owner }}"
+
+  # ---- client update available -> one low event per device and client version
+  - name: update_available
+    entity: event
+    endpoint: "/api/v2/tailnet/-/devices"
+    records_path: "devices[?updateAvailable]"
+    mapping:
+      id: "join(':', ['update', nodeId || id, clientVersion || ''])"
+      type: "'client_update_available'"
+      severity: "'low'"
+      timestamp: "lastSeen"
+      description: "join('', ['Tailscale client update available on ', hostname, ' (', clientVersion || 'unknown version', ')'])"
+      host: "hostname"
+      src_ip: "addresses[0]"
+      user: "user"
+      resource: "join(':', ['device', nodeId || id])"
+
+  # ---- node key expiring within 7 days -> one medium event per device and key expiry
+  - name: key_expiry
+    entity: event
+    endpoint: "/api/v2/tailnet/-/devices"
+    records_path: "devices[?!keyExpiryDisabled && days_until(expires) >= `0` && days_until(expires) < `7`]"
+    mapping:
+      id: "join(':', ['key-expiry', nodeId || id, expires])"
+      type: "'device_key_expiring'"
+      severity: "'medium'"
+      timestamp: "lastSeen"
+      description: "join('', ['Device key expiring soon: ', hostname, ' (expires ', expires, ')'])"
+      host: "hostname"
+      src_ip: "addresses[0]"
+      user: "user"
+      resource: "join(':', ['device', nodeId || id])"

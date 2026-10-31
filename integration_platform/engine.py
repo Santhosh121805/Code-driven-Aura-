@@ -19,11 +19,11 @@ from urllib.parse import quote, urljoin, urlsplit
 
 import httpx
 import jmespath
-from jinja2 import StrictUndefined, TemplateError
+from jinja2 import StrictUndefined, TemplateError, Undefined
 from jinja2.sandbox import SandboxedEnvironment
 
 from integration_platform.config import (
-    AuthApiKey, AuthBasic, AuthBearer, AuthOAuth2, AuthSessionLogin, IntegrationConfig, MissingSecretError, PaginationCursor,
+    ENTITY_FIELDS, AuthApiKey, AuthBasic, AuthBearer, AuthOAuth2, AuthSessionLogin, IntegrationConfig, MissingSecretError, PaginationCursor,
     PaginationLink, PaginationNone, PaginationOffset, PaginationPage, RateLimitSpec, RetrySpec, Stream, env_refs, lookup_ref,
     resolve_env,
 )
@@ -329,7 +329,8 @@ def render_params(params: dict[str, Any], context: dict[str, Any]) -> dict[str, 
 
 
 def extract_records(body: Any, records_path: str | None) -> list[Any]:
-    data = jmespath.search(records_path, body) if records_path else body
+    """The list of records in a response. records_path may filter too, e.g. devices[?updateAvailable]."""
+    data = search(records_path, body) if records_path else body
     if data is None:
         return []
     if isinstance(data, dict):
@@ -630,6 +631,22 @@ async def fan_out(cfg: IntegrationConfig, stream: Stream, parents: list[Any], la
     return out
 
 
+_event_jinja = SandboxedEnvironment(undefined=Undefined, autoescape=False)
+
+
+def new_record_event(cfg: IntegrationConfig, stream: Stream, row: dict[str, Any], fetched_at: str) -> dict[str, Any]:
+    """The event a stream's new_record_event raises the first time a record id is seen (e.g. "New device joined")."""
+    spec = stream.new_record_event
+    fields = {k: row.get(k) for k in ENTITY_FIELDS[stream.entity]}
+    text = _event_jinja.from_string(spec.description).render({k: (v if v not in (None, "") else "unknown") for k, v in fields.items()})
+    return {
+        "entity": "event", "source": cfg.name, "stream": stream.name, "id": f"new:{stream.name}:{row['id']}",
+        "type": spec.type, "severity": spec.severity, "timestamp": fetched_at, "description": " ".join(text.split()),
+        "host": fields.get("hostname"), "src_ip": fields.get("ip"), "dst_ip": None, "user": fields.get("owner") or fields.get("email"),
+        "resource": f"{stream.entity}:{row['id']}", "fetched_at": fetched_at, "raw": {"new_record": fields},
+    }
+
+
 def _relearn_baseline_on_change(cfg: IntegrationConfig, db: Any) -> None:
     """Adding or removing endpoints legitimately changes a connector's volume: re-learn the guard baseline then."""
     previous = db.last_run_streams(cfg.name)
@@ -722,7 +739,11 @@ async def run_integration(cfg: IntegrationConfig, db: Any, on_new_event: OnNewEv
                     kept.append((record, row["id"]))
                 if outcome in ("new", "updated"):
                     result[outcome] += 1
-                if outcome == "new" and stream.entity == "event" and on_new_event:
+                if outcome == "new" and stream.entity != "event" and stream.new_record_event:
+                    row = new_record_event(cfg, stream, row, started)  # first time this id is seen: raise an event
+                    outcome = "new" if db.store(row) == "new" else "duplicate"
+                    result["new_events"] = result.get("new_events", 0) + (outcome == "new")
+                if outcome == "new" and row["entity"] == "event" and on_new_event:
                     try:
                         await on_new_event(row)
                     except Exception:  # an action failure must never fail ingestion

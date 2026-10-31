@@ -419,7 +419,26 @@ async function renderUsers() {
     : emptyRow(5, us.q || us.source ? "No matching users" : "No users yet", us.q || us.source ? ": clear the search or pick another source." : ": run a connection with a users stream.");
 }
 
+const ONLINE_MS = 5 * 60e3;  // seen in the last 5 minutes = online (Tailscale polls every minute)
+const isMock = (i) => /\bmock\b/i.test(i.display_name);
+function onlineCell(lastSeen) {
+  if (!lastSeen) return '<span class="presence"><i class="dot"></i><span class="muted">Never seen</span></span>';
+  const age = Date.now() - new Date(lastSeen).getTime();
+  const online = age <= ONLINE_MS;
+  return `<span class="presence" title="Last seen ${esc(fullTime(lastSeen))}"><i class="dot ${online ? "ok" : ""}"></i>${online ? "Online" : `<span class="muted">Offline · ${esc(relTime(lastSeen))}</span>`}</span>`;
+}
+/** Device sources for the filter: integrations with a device stream (or stored devices), real sources first. */
+function renderDeviceSources() {
+  const sel = $("#dvSource");
+  const sources = state.integrations.filter((i) => (i.streams || []).some((s) => s.entity === "device") || (i.health.counts || {}).devices)
+    .sort((a, b) => isMock(a) - isMock(b) || a.display_name.localeCompare(b.display_name));
+  const html = ['<option value="">All sources</option>', ...sources.map((i) => `<option value="${esc(i.name)}">${esc(i.display_name)}${isMock(i) ? "" : " (real)"}</option>`)].join("");
+  if (sel.dataset.sig !== html) { sel.innerHTML = html; sel.dataset.sig = html; }
+  sel.value = dv.source;
+}
+
 async function renderDevices() {
+  renderDeviceSources();
   const q = new URLSearchParams({ limit: dv.limit, offset: dv.offset });
   if (dv.q) q.set("q", dv.q);
   if (dv.source) q.set("source", dv.source);
@@ -430,7 +449,7 @@ async function renderDevices() {
   $("#dvNext").disabled = dv.offset + dv.limit >= data.total;
   $("#devicesTable tbody").innerHTML = data.items.length ? data.items.map((d, i) => `<tr data-i="${i}">
       <td><span class="cell-main" title="${esc(d.hostname)}" style="font-weight:500">${esc(d.hostname || "-")}</span></td><td>${mono(d.ip)}</td><td>${cell(d.os)}</td>
-      <td>${cell(d.owner)}</td><td>${timeHtml(d.last_seen)}</td><td>${sourceTag(d.source)}</td></tr>`).join("")
+      <td>${cell(d.owner)}</td><td>${onlineCell(d.last_seen)}</td><td>${sourceTag(d.source)}</td></tr>`).join("")
     : emptyRow(6, dv.q || dv.source ? "No matching devices" : "No devices yet",
       dv.q || dv.source ? ": clear the search or pick another source." : ": none of the connected tools reports a device inventory. Add one with a devices stream.");
 }

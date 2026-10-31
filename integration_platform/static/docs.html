@@ -223,7 +223,7 @@ streams:
             <tr><td><code>name</code>, <code>entity</code></td><td>Stream ID (unique in the integration) and the table it fills: <code>user</code>, <code>device</code>, <code>event</code> or <code>repository</code>.</td></tr>
             <tr><td><code>endpoint</code> (or <code>path</code>), <code>method</code></td><td>Path (starts with <code>/</code>) and <code>GET</code> or <code>POST</code> (with <code>body</code>).</td></tr>
             <tr><td><code>params</code>, <code>headers</code></td><td>Query parameters and extra headers. <code>{{ last_sync }}</code> in a parameter fetches only new data.</td></tr>
-            <tr><td><code>records_path</code></td><td>JMESPath to the list of records.</td></tr>
+            <tr><td><code>records_path</code></td><td>JMESPath to the list of records. It can filter too: <code>devices[?updateAvailable]</code>, <code>devices[?days_until(expires) &lt; `7`]</code>. Several streams may read the same endpoint with different filters (Tailscale: devices, update events, key-expiry events).</td></tr>
             <tr><td><code>mapping</code></td><td>Common field → JMESPath in one record.</td></tr>
             <tr><td><code>required_fields</code></td><td>Default: <code>id</code>, plus <code>timestamp</code> for events. Records without them are quarantined.</td></tr>
             <tr><td><code>requires_env</code></td><td>Skip the stream unless these settings exist (e.g. <code>GITHUB_ORG</code>).</td></tr>
@@ -232,6 +232,7 @@ streams:
             <tr><td><code>for_each</code></td><td>Run once per record of another stream (see below).</td></tr>
             <tr><td><code>merge_into_parent</code></td><td>With <code>for_each</code>: add the mapped fields to the parent record instead of storing new rows.</td></tr>
             <tr><td><code>parent_status</code></td><td>With <code>for_each</code>: write each item's outcome into a parent field, e.g. <code>dependabot_status</code>.</td></tr>
+            <tr><td><code>new_record_event</code></td><td>Users, devices, repositories: raise an event the first time a record id is seen, e.g. <code>{type: device_joined, severity: info, description: "New device joined: {{ hostname }} ({{ os }}) by {{ owner }}"}</code>. The text may use only the record's own fields.</td></tr>
           </tbody></table></div>
         <h2>for_each: one call per parent record</h2>
         <p>Some data needs one call per item: languages per repository, details per alert ID. <code>for_each</code> runs a stream once for every record of another stream of the same integration. It is a generic engine feature; GitHub uses it through config only.</p>
@@ -284,6 +285,7 @@ transforms:
           <tr><td><code>parent()</code></td><td>The parent record of a <code>for_each</code> stream, e.g. <code>parent().full_name</code>.</td></tr>
           <tr><td><code>base64_decode(s)</code></td><td>Decodes base64 text (e.g. a README's <code>content</code>).</td></tr>
           <tr><td><code>first_paragraph(text, `200`)</code></td><td>First meaningful paragraph of Markdown: skips headings, badges, images, HTML, code, front matter, link-only lines and template boilerplate; trims to the length on a word boundary.</td></tr>
+          <tr><td><code>days_until(time)</code></td><td>Days from now until a timestamp (negative = past), e.g. for "key expires within 7 days".</td></tr>
           <tr><td><code>percent_map(@)</code></td><td><code>{"Python": 900, "Shell": 100}</code> → bytes and percent per key, largest first.</td></tr>
         </tbody></table></div>
       </article>

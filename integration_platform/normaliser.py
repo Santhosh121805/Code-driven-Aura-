@@ -112,6 +112,15 @@ class _Functions(functions.Functions):
     def _func_first_paragraph(self, text: str | None, max_len: float) -> str | None:
         return first_paragraph(text, int(max_len)) if text else None
 
+    @functions.signature({"types": ["string", "number", "null"]})
+    def _func_days_until(self, value: Any) -> float | None:
+        """Days from now until a timestamp (negative = in the past), e.g. days_until(expires) < `7`. null if unparseable."""
+        when = parse_time(value)
+        if when is None:
+            return None
+        delta = datetime.strptime(when, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc) - datetime.now(timezone.utc)
+        return round(delta.total_seconds() / 86400, 3)
+
     @functions.signature({"types": ["object", "null"]})
     def _func_percent_map(self, counts: dict | None) -> dict | None:
         """{"Python": 9000, "Shell": 1000} -> {"Python": {"bytes": 9000, "percent": 90.0}, ...}, largest first."""

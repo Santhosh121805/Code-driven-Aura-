@@ -31,7 +31,7 @@ os.environ.update({
     "INTEGRATION_HUB_ENV_FILE": "",  # never load the developer's .env (real secrets) into tests
 })
 for real in ("github_token", "GITHUB_OWNER", "GITHUB_REPO", "GITHUB_ORG", "okta_token", "OKTA_DOMAIN",
-             "jira_email", "jira_token", "JIRA_DOMAIN", "nvd_api_key"):
+             "jira_email", "jira_token", "JIRA_DOMAIN", "nvd_api_key", "tailscale_token"):
     os.environ.pop(real, None)
 
 from integration_platform import auth  # noqa: E402
