@@ -19,7 +19,7 @@ async def test_one_connector_fills_two_entity_tables(db, okta):
     assert (users["entity"], users["status"], users["fetched"]) == ("user", "ok", 10)
     assert (events["entity"], events["status"], events["fetched"]) == ("event", "ok", 24)
     counts = db.source_counts("mock_okta")
-    assert counts == {"users": 10, "devices": 0, "events": 24}
+    assert counts == {"users": 10, "devices": 0, "events": 24, "repositories": 0}
     user = db.list_records("user", "mock_okta")[0][0]
     assert user["source"] == "mock_okta" and user["fetched_at"].endswith("Z") and "@mitigata-demo.in" in user["email"]
 
@@ -33,11 +33,25 @@ async def test_device_table_gets_every_field(db, firewall):
 
 
 def github_router(dependabot_status: int):
-    """Fake GitHub: /user, collaborators, dependabot (status configurable), repo events."""
+    """Fake GitHub: /user, /user/repos (2 repos), languages, readme, collaborators, dependabot (status configurable), repo events."""
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
         if path == "/user":
             return httpx.Response(200, json={"id": 1, "login": "octo", "name": "Octo Cat", "email": None})
+        if path == "/user/repos":
+            return httpx.Response(200, json=[
+                {"id": 10, "full_name": "octo/demo", "html_url": "https://github.com/octo/demo", "description": "Demo app",
+                 "topics": ["demo"], "language": "Python", "visibility": "private", "fork": False, "archived": False,
+                 "default_branch": "main", "stargazers_count": 3, "forks_count": 1, "open_issues_count": 2,
+                 "created_at": "2025-01-01T00:00:00Z", "pushed_at": "2026-10-30T08:00:00Z"},
+                {"id": 11, "full_name": "octo/tools", "html_url": "https://github.com/octo/tools", "description": None,
+                 "topics": [], "language": "Go", "visibility": "public", "fork": True, "archived": False,
+                 "pushed_at": "2026-09-01T08:00:00Z"}])
+        if path.endswith("/languages"):
+            return httpx.Response(200, json={"Python": 300, "HTML": 100})
+        if path.endswith("/readme"):
+            import base64
+            return httpx.Response(200, json={"content": base64.b64encode(b"# tools\n\nSmall CLI helpers.").decode()})
         if path.endswith("/collaborators"):
             return httpx.Response(200, json=[{"id": 2, "login": "hubot", "role_name": "admin"}])
         if path.endswith("/dependabot/alerts"):
@@ -59,31 +73,52 @@ def github_env(monkeypatch):
         monkeypatch.setenv(k, v)
 
 
-async def test_requires_env_skips_optional_stream_and_dependabot_wins(db, github_env):
+async def test_github_all_repositories_through_config_only(db, github_env):
     result = await run_integration(load("github"), db, transport=github_router(200), sleep=no_sleep)
     status = {s["name"]: s["status"] for s in result["streams"]}
-    assert status == {"me": "ok", "collaborators": "ok", "org_members": "skipped: GITHUB_ORG not set",
-                      "dependabot_alerts": "ok", "repo_events": "skipped: dependabot_alerts is available"}
-    event = db.list_records("event", "github")[0][0]
-    assert (event["id"], event["type"], event["severity"], event["description"]) == (
-        "dependabot-7", "dependabot_alert", "high", "Prototype pollution (lodash)")
+    assert status == {"repositories": "ok", "repo_languages": "ok", "repo_readme": "ok", "dependabot_alerts": "ok",
+                      "me": "ok", "collaborators": "ok", "org_members": "skipped: GITHUB_ORG not set"}
+    repos = {r["full_name"]: r for r in db.list_records("repository", "github")[0]}
+    demo, tools = repos["octo/demo"], repos["octo/tools"]
+    assert (demo["url"], demo["primary_language"], demo["visibility"], demo["stars"], demo["topics"]) == (
+        "https://github.com/octo/demo", "Python", "private", "3", ["demo"])
+    assert demo["languages"]["Python"]["percent"] == 75.0 and demo["dependabot_status"] == "enabled"
+    assert demo["summary"] is None and (tools["summary"], tools["summary_source"]) == ("Small CLI helpers.", "README")
+    events = db.list_records("event", "github")[0]
+    assert {(e["id"], e["type"], e["severity"], e["description"], e["resource"]) for e in events} == {
+        ("octo/demo#7", "dependabot_alert", "high", "lodash: Prototype pollution", "octo/demo"),
+        ("octo/tools#7", "dependabot_alert", "high", "lodash: Prototype pollution", "octo/tools")}
     assert db.source_counts("github")["users"] == 2
 
 
-@pytest.mark.parametrize("status", [403, 404])
-async def test_fallback_stream_used_when_dependabot_unavailable(db, github_env, status):
+@pytest.mark.parametrize("status,value", [(403, "disabled"), (404, "no access")])
+async def test_github_dependabot_unavailable_is_skipped_per_repository(db, github_env, status, value):
     result = await run_integration(load("github"), db, transport=github_router(status), sleep=no_sleep)
+    alerts = next(s for s in result["streams"] if s["name"] == "dependabot_alerts")
+    assert result["status"] == "success" and alerts["status"] == "ok" and alerts["skipped"] == 2
+    assert {r["dependabot_status"] for r in db.list_records("repository", "github")[0]} == {value}
+
+
+@pytest.mark.parametrize("status", [403, 404])
+async def test_fallback_stream_used_when_primary_unavailable(db, github_env, status):
+    from integration_platform.config import validate_integration
+    cfg = validate_integration({
+        "name": "gh_single", "display_name": "GH", "base_url": "https://api.github.com", "auth": {"type": "bearer", "token": "${github_token}"},
+        "streams": [
+            {"name": "dependabot_alerts", "endpoint": "/repos/${GITHUB_OWNER}/${GITHUB_REPO}/dependabot/alerts",
+             "mapping": {"id": "to_string(number)", "timestamp": "updated_at"}},
+            {"name": "repo_events", "fallback_for": "dependabot_alerts", "endpoint": "/repos/${GITHUB_OWNER}/${GITHUB_REPO}/events",
+             "mapping": {"id": "id", "type": "type", "timestamp": "created_at"}}]})
+    result = await run_integration(cfg, db, transport=github_router(status), sleep=no_sleep)
     st = {s["name"]: s["status"] for s in result["streams"]}
     assert st["dependabot_alerts"].startswith(f"not available (HTTP {status})") and st["repo_events"] == "ok"
     assert result["status"] == "success"
-    assert db.list_records("event", "github")[0][0]["type"] == "PushEvent"
+    assert db.list_records("event", "gh_single")[0][0]["type"] == "PushEvent"
 
 
 def test_missing_settings_drive_not_configured(monkeypatch):
-    assert missing_settings(load("github")) == ["GITHUB_OWNER", "GITHUB_REPO", "github_token"]
+    assert missing_settings(load("github")) == ["github_token"]  # the demo-repo streams are optional (requires_env)
     assert missing_settings(load("nvd")) == []  # optional key
-    monkeypatch.setenv("GITHUB_OWNER", "o")
-    monkeypatch.setenv("GITHUB_REPO", "r")
     monkeypatch.setenv("github_token", "t")
     assert missing_settings(load("github")) == []  # GITHUB_ORG only needed for its optional stream
 

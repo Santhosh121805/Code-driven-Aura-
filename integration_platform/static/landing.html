@@ -75,25 +75,87 @@
           <div class="code-panes">
             <div class="pane" role="tabpanel" id="pane-github" aria-labelledby="tab-github">
               <div class="window"><div class="window-bar"><span class="dots"><i></i><i></i><i></i></span><span class="file-tab">github.yaml</span><span class="spacer"></span><button class="copy" type="button" data-copy-target>Copy</button></div>
-                <pre class="code-body yaml" data-file="configs/integrations/github.yaml"># REAL source: GitHub REST API. Login: Bearer token (fine-grained PAT, read-only). Paging: Link header with page numbers.
+                <pre class="code-body yaml" data-file="configs/integrations/github.yaml"># REAL source: GitHub REST API. Login: Bearer token (fine-grained PAT, read-only: Metadata, Contents, Dependabot alerts).
+# Paging: Link header. Every repository the token can see, plus per-repository endpoints through for_each
+# (generic engine feature: no GitHub-specific code).
 name: github
 display_name: "GitHub"
 enabled: true
 base_url: "https://api.github.com"
 auth: { type: bearer, token: "${github_token}" }
-scopes: ["metadata:read", "dependabot_alerts:read"]   # fine-grained PAT permissions (read-only)
+scopes: ["metadata:read", "contents:read", "dependabot_alerts:read"]   # fine-grained PAT permissions (read-only)
 headers:
   Accept: "application/vnd.github+json"
   X-GitHub-Api-Version: "2022-11-28"
-schedule_seconds: 900
-rate_limit: { reset_header: "x-ratelimit-reset", remaining_header: "x-ratelimit-remaining", min_remaining: 1 }
+schedule_seconds: 3600     # ~3 calls per repository per run; hourly stays far below the 5,000 calls/hour limit
+rate_limit: { reset_header: "x-ratelimit-reset", remaining_header: "x-ratelimit-remaining", min_remaining: 50 }
 streams:
+  # ---- every repository the token can see -&gt; repositories table
+  - name: repositories
+    entity: repository
+    path: "/user/repos"
+    params: { affiliation: "owner,collaborator,organization_member", per_page: 100, sort: pushed }
+    pagination: { type: link, max_pages: 10 }
+    mapping:
+      id: "id"
+      full_name: "full_name"
+      url: "html_url"
+      description: "description"
+      topics: "topics"
+      primary_language: "language"
+      visibility: "visibility"
+      is_fork: "fork"
+      is_archived: "archived"
+      default_branch: "default_branch"
+      stars: "stargazers_count"
+      forks: "forks_count"
+      open_issues: "open_issues_count"
+      created_at: "created_at"
+      last_pushed_at: "pushed_at"
+
+  # ---- language breakdown, merged into each repository (bytes + %)
+  - name: repo_languages
+    entity: repository
+    for_each: { stream: repositories, as: repo, concurrency: 4 }
+    path: "/repos/{{ repo.full_name }}/languages"
+    merge_into_parent: true
+    mapping:
+      languages: "percent_map(@)"
+
+  # ---- README summary, only for repositories without a description
+  - name: repo_readme
+    entity: repository
+    for_each: { stream: repositories, as: repo, concurrency: 4, where: "!description" }
+    path: "/repos/{{ repo.full_name }}/readme"
+    merge_into_parent: true
+    mapping:
+      summary: "first_paragraph(base64_decode(content), `200`)"
+      summary_source: "first_paragraph(base64_decode(content), `200`) &amp;&amp; 'README'"
+
+  # ---- open Dependabot alerts of every repository -&gt; events; per-repository status on the repository
+  - name: dependabot_alerts
+    entity: event
+    for_each: { stream: repositories, as: repo, concurrency: 4 }
+    path: "/repos/{{ repo.full_name }}/dependabot/alerts"
+    params: { state: open, per_page: 100, sort: updated }
+    pagination: { type: link, max_pages: 5 }
+    parent_status: { field: dependabot_status, ok: enabled, by_status: { 403: disabled, 404: no access } }
+    mapping:
+      id: "join('#', [parent().full_name, to_string(number)])"
+      type: "'dependabot_alert'"
+      severity: "security_advisory.severity"
+      timestamp: "updated_at"
+      description: "join(': ', [dependency.package.name, security_advisory.summary])"
+      resource: "parent().full_name"
+
+  # ---- people: the token owner, the demo repository's collaborators, org members (when GITHUB_ORG is set)
   - name: me
     entity: user
     endpoint: "/user"
     mapping: { id: "id", name: "name || login", email: "email", status: "'active'" }
   - name: collaborators
     entity: user
+    requires_env: ["GITHUB_OWNER", "GITHUB_REPO"]
     endpoint: "/repos/${GITHUB_OWNER}/${GITHUB_REPO}/collaborators"
     params: { per_page: 100 }
     pagination: { type: link, max_pages: 10 }
@@ -104,30 +166,7 @@ streams:
     endpoint: "/orgs/${GITHUB_ORG}/members"
     params: { per_page: 100 }
     pagination: { type: link, max_pages: 10 }
-    mapping: { id: "id", name: "login", status: "'member'" }
-  - name: dependabot_alerts
-    entity: event
-    endpoint: "/repos/${GITHUB_OWNER}/${GITHUB_REPO}/dependabot/alerts"
-    params: { per_page: 100, state: "open" }
-    pagination: { type: link, max_pages: 10 }
-    mapping:
-      id: "join('-', ['dependabot', to_string(number)])"
-      type: "'dependabot_alert'"
-      severity: "security_advisory.severity"
-      timestamp: "updated_at"
-      description: "join('', [security_advisory.summary, ' (', dependency.package.name, ')'])"
-  - name: repo_events          # used only when Dependabot alerts are not available (HTTP 403/404)
-    entity: event
-    fallback_for: dependabot_alerts
-    endpoint: "/repos/${GITHUB_OWNER}/${GITHUB_REPO}/events"
-    params: { per_page: 100 }
-    pagination: { type: link, max_pages: 3 }
-    mapping:
-      id: "id"
-      type: "type"
-      timestamp: "created_at"
-      description: "join(' ', [actor.login, type, repo.name])"
-      user: "actor.login"</pre></div>
+    mapping: { id: "id", name: "login", status: "'member'" }</pre></div>
               <div class="chips"><span class="chip-h"><b>Login</b>Bearer token</span><span class="chip-h"><b>Paging</b>Link header</span></div>
             </div>
             <div class="pane" role="tabpanel" id="pane-okta" aria-labelledby="tab-okta" hidden>

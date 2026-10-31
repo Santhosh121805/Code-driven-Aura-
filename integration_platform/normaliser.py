@@ -1,14 +1,101 @@
-"""Map raw tool records into the common schema: users, devices and events."""
+"""Map raw tool records into the common schema: users, devices, events and repositories."""
 from __future__ import annotations
 
+import base64
+import binascii
+import contextvars
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any
 
 import jmespath
+from jmespath import functions
 
-from integration_platform.config import ENTITY_FIELDS, SEVERITIES, TIME_FIELD, Stream, Transforms
+from integration_platform.config import ENTITY_FIELDS, SEVERITIES, STRUCTURED_FIELDS, TIME_FIELD, Stream, Transforms
+
+_parent: contextvars.ContextVar[Any] = contextvars.ContextVar("parent", default=None)
+
+_MD_LINK = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
+_HTML_TAG = re.compile(r"<[^>]+>")
+_SKIP_LINE = re.compile(r"^\s*(#|!\[|\[!\[|<img|<p\b|<div|</|<!--|<h\d|<a\b[^>]*>\s*<img|[-*_=]{3,}\s*$|\||>)", re.I)
+
+
+def first_paragraph(text: str, max_len: int = 200) -> str | None:
+    """First readable paragraph of a README: skips headings, badges, images, HTML, tables and code blocks;
+    strips Markdown links/emphasis and trims to max_len characters on a word boundary."""
+    paragraph: list[str] = []
+    in_code = False
+    for line in text.splitlines():
+        if line.lstrip().startswith(("```", "~~~")):
+            in_code = not in_code
+            if paragraph:
+                break
+            continue
+        if in_code:
+            continue
+        if not line.strip():
+            if paragraph:
+                break
+            continue
+        if _SKIP_LINE.match(line):
+            if paragraph:
+                break
+            continue
+        clean = _HTML_TAG.sub("", _MD_LINK.sub(r"\1", line))
+        clean = re.sub(r"[*_`]{1,3}", "", clean).strip()
+        if clean:
+            paragraph.append(clean)
+    out = " ".join(" ".join(paragraph).split())
+    if len(out) < 3:
+        return None
+    if len(out) > max_len:
+        out = out[:max_len].rsplit(" ", 1)[0].rstrip(".,;:") + "…"
+    return out
+
+
+class _Functions(functions.Functions):
+    """Extra JMESPath functions for mappings (all pure, no I/O)."""
+
+    @functions.signature()
+    def _func_parent(self) -> Any:
+        """The parent record of a for_each stream, e.g. parent().full_name."""
+        return _parent.get()
+
+    @functions.signature({"types": ["string", "null"]})
+    def _func_base64_decode(self, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            return base64.b64decode("".join(value.split()), validate=False).decode("utf-8", errors="replace")
+        except (binascii.Error, ValueError):
+            return None
+
+    @functions.signature({"types": ["string", "null"]}, {"types": ["number"]})
+    def _func_first_paragraph(self, text: str | None, max_len: float) -> str | None:
+        return first_paragraph(text, int(max_len)) if text else None
+
+    @functions.signature({"types": ["object", "null"]})
+    def _func_percent_map(self, counts: dict | None) -> dict | None:
+        """{"Python": 9000, "Shell": 1000} -> {"Python": {"bytes": 9000, "percent": 90.0}, ...}, largest first."""
+        if counts is None:
+            return None
+        numbers = {k: v for k, v in counts.items() if isinstance(v, (int, float)) and not isinstance(v, bool)}
+        total = sum(numbers.values()) or 1
+        return {k: {"bytes": v, "percent": round(100 * v / total, 1)} for k, v in sorted(numbers.items(), key=lambda kv: -kv[1])}
+
+
+_OPTIONS = jmespath.Options(custom_functions=_Functions())
+
+
+def search(path: str, record: Any, parent: Any = None) -> Any:
+    """jmespath.search with the platform's extra functions; parent() returns `parent`."""
+    token = _parent.set(parent)
+    try:
+        return jmespath.search(path, record, options=_OPTIONS)
+    finally:
+        _parent.reset(token)
 
 
 def _iso(dt: datetime) -> str:
@@ -87,22 +174,29 @@ def _kind(value: Any) -> str:
     return {dict: "an object", list: "a list", bool: "a boolean"}.get(type(value), type(value).__name__)
 
 
-def normalise(record: Any, stream: Stream, source: str, fetched_at: str | None = None) -> dict[str, Any]:
+def normalise(record: Any, stream: Stream, source: str, fetched_at: str | None = None, parent: Any = None) -> dict[str, Any]:
     """Apply a stream's mapping + transforms to one raw record -> one common-schema row for stream.entity.
+    `parent` is the parent record of a for_each stream (parent() in mappings).
     Raises BadRecord for data that must not be ingested (missing required field, wrong type, bad time)."""
     if not isinstance(record, dict):
         raise BadRecord(f"record is not a JSON object (got {_kind(record)})")
     entity, fields, time_field = stream.entity, ENTITY_FIELDS[stream.entity], TIME_FIELD[stream.entity]
+    structured = STRUCTURED_FIELDS.get(entity, ())
     values: dict[str, Any] = {}
     for field in fields:
         path = stream.mapping.get(field)
         if not path:
             continue
         try:
-            value = jmespath.search(path, record)
+            value = search(path, record, parent)
         except Exception:  # e.g. type error inside a JMESPath function
             value = None
-        if isinstance(value, (dict, list)) or (isinstance(value, bool) and field in ("id", time_field)):
+        if field in structured:
+            if isinstance(value, (dict, list)):
+                value = json.dumps(value, ensure_ascii=False)
+            elif value is not None:
+                value = json.dumps([value] if field == "topics" else value, ensure_ascii=False)
+        elif isinstance(value, (dict, list)) or (isinstance(value, bool) and field in ("id", time_field)):
             raise BadRecord(f"wrong type for {field}: '{path}' is {_kind(value)}, expected a single value")
         values[field] = value
     for field in stream.required:

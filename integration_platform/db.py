@@ -1,4 +1,4 @@
-"""SQLite storage: one place for all results in the common schema (users, devices, events), plus runs, quarantine,
+"""SQLite storage: one place for all results in the common schema (users, devices, events, repositories), plus runs, quarantine,
 sync state, connector state, encrypted secrets and action bookkeeping."""
 from __future__ import annotations
 
@@ -10,10 +10,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from integration_platform.config import ENTITY_FIELDS, ROOT
+from integration_platform.config import ENTITY_FIELDS, ROOT, STRUCTURED_FIELDS
 
 SCHEMA_VERSION = 3
-TABLES = {"user": "users", "device": "devices", "event": "events"}
+TABLES = {"user": "users", "device": "devices", "event": "events", "repository": "repositories"}
 
 
 
@@ -120,7 +120,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
     outcome TEXT NOT NULL
 );
 """
-DATA_TABLES = ("users", "devices", "events", "integration_runs", "sync_state", "action_dedupe", "action_results",
+DATA_TABLES = ("users", "devices", "events", "repositories", "integration_runs", "sync_state", "action_dedupe", "action_results",
                "quarantine", "connector_state", "failure_alerts", "notifications")
 
 
@@ -146,7 +146,17 @@ class Database:
                     self._conn.execute(f"DROP TABLE IF EXISTS {table}")
                 self._conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             self._conn.executescript(SCHEMA)
+            self._add_new_columns()
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_events_resource ON events (source, resource)")
             self._conn.commit()
+
+    def _add_new_columns(self) -> None:
+        """Additive migration: schema fields added later (e.g. events.resource) become new columns; data is kept."""
+        for entity, table in TABLES.items():
+            have = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
+            for column in ENTITY_FIELDS[entity]:
+                if column not in have:
+                    self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
 
     def _exec(self, sql: str, params: tuple | list = ()) -> sqlite3.Cursor:
         with self._lock:
@@ -163,9 +173,10 @@ class Database:
         return rows[0] if rows else None
 
     # ------------------------------------------------------------ common-schema records
-    def store(self, row: dict[str, Any]) -> str:
-        """Store one normalised row. Events are immutable (insert once); users/devices are refreshed in place.
-        Returns 'new', 'updated' or 'duplicate'. The (source, id) unique key guarantees no duplicates."""
+    def store(self, row: dict[str, Any], fields: Any = None) -> str:
+        """Store one normalised row. Events are immutable (insert once); other entities are refreshed in place.
+        `fields` (the stream's mapped fields) limits a refresh to those columns, so fields filled by another stream
+        (e.g. a repository's languages) are kept. Returns 'new', 'updated' or 'duplicate'. (source, id) is unique."""
         entity = row["entity"]
         table = TABLES[entity]
         cols = ["source", "stream", "id", *[c for c in ENTITY_FIELDS[entity] if c != "id"], "raw", "fetched_at"]
@@ -178,14 +189,36 @@ class Database:
                     return "duplicate"
                 self._conn.execute(f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({placeholders})", values)
             else:
-                updates = ", ".join(f"{c} = excluded.{c}" for c in cols if c not in ("source", "id"))
+                keep = set(fields) | {"stream", "raw", "fetched_at"} if fields is not None else set(cols)
+                updates = ", ".join(f"{c} = excluded.{c}" for c in cols if c not in ("source", "id") and c in keep)
                 self._conn.execute(f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({placeholders}) "
                                    f"ON CONFLICT(source, id) DO UPDATE SET {updates}", values)
             self._conn.commit()
         return "updated" if exists else "new"
 
-    SEARCH_COLUMNS = {"event": ("id", "type", "description", "host", "src_ip", "dst_ip", "user", "ticket_key"),
-                      "user": ("id", "name", "email", "status"), "device": ("id", "hostname", "ip", "os", "owner")}
+    def merge_fields(self, entity: str, source: str, record_id: str, values: dict[str, Any]) -> bool:
+        """Fill fields of an existing row (for_each merge_into_parent / parent_status). None values never erase data.
+        Returns False when the row does not exist."""
+        values = {k: v for k, v in values.items() if v is not None and k in ENTITY_FIELDS[entity] and k != "id"}
+        if not values:
+            return self._one(f"SELECT 1 AS x FROM {TABLES[entity]} WHERE source = ? AND id = ?", (source, record_id)) is not None
+        sets = ", ".join(f"{k} = ?" for k in values)
+        cur = self._exec(f"UPDATE {TABLES[entity]} SET {sets} WHERE source = ? AND id = ?", [*values.values(), source, record_id])
+        return cur.rowcount > 0
+
+    def resource_severity_counts(self, source: str | None = None) -> dict[str, dict[str, int]]:
+        """{resource: {severity: n}} for events tied to a resource (e.g. Dependabot alerts per repository)."""
+        where, params = "resource IS NOT NULL", []
+        if source:
+            where += " AND source = ?"; params.append(source)
+        out: dict[str, dict[str, int]] = {}
+        for r in self._all(f"SELECT resource, severity, COUNT(*) AS n FROM events WHERE {where} GROUP BY resource, severity", params):
+            out.setdefault(r["resource"], {})[r["severity"]] = r["n"]
+        return out
+
+    SEARCH_COLUMNS = {"event": ("id", "type", "description", "host", "src_ip", "dst_ip", "user", "ticket_key", "resource"),
+                      "user": ("id", "name", "email", "status"), "device": ("id", "hostname", "ip", "os", "owner"),
+                      "repository": ("full_name", "description", "summary", "topics", "primary_language")}
 
     def list_records(self, entity: str, source: str | None = None, severity: str | None = None, type_: str | None = None,
                      limit: int = 50, offset: int = 0, q: str | None = None, since: str | None = None) -> tuple[list[dict], int]:
@@ -205,11 +238,14 @@ class Database:
         if since and entity == "event":
             where.append("timestamp >= ?"); params.append(since)
         clause = f"WHERE {' AND '.join(where)}" if where else ""
-        order = {"event": "timestamp DESC, row_id DESC", "user": "fetched_at DESC, name", "device": "fetched_at DESC, hostname"}[entity]
+        order = {"event": "timestamp DESC, row_id DESC", "user": "fetched_at DESC, name", "device": "fetched_at DESC, hostname",
+                 "repository": "last_pushed_at DESC, full_name"}[entity]
         total = self._one(f"SELECT COUNT(*) AS n FROM {table} {clause}", params)["n"]
         rows = self._all(f"SELECT * FROM {table} {clause} ORDER BY {order} LIMIT ? OFFSET ?", params + [limit, offset])
         for row in rows:
             row["raw"] = json.loads(row["raw"])
+            for column in STRUCTURED_FIELDS.get(entity, ()):
+                row[column] = json.loads(row[column]) if row.get(column) else None
         return rows, total
 
     def get_event(self, source: str, event_id: str) -> dict | None:
@@ -273,6 +309,13 @@ class Database:
         rows = self._all("SELECT records_fetched FROM integration_runs WHERE integration = ? AND status = 'success' AND id > ? "
                          "ORDER BY id DESC LIMIT ?", (integration, since, limit))
         return [r["records_fetched"] for r in rows]
+
+    def last_run_streams(self, integration: str) -> list[str] | None:
+        """Stream names of the latest finished run (None if unknown)."""
+        row = self._one("SELECT detail FROM integration_runs WHERE integration = ? AND finished_at IS NOT NULL AND detail IS NOT NULL "
+                        "ORDER BY id DESC LIMIT 1", (integration,))
+        streams = json.loads(row["detail"]).get("streams") if row else None
+        return [s["name"] for s in streams] if streams else None
 
     def restart_baseline(self, integration: str) -> None:
         last = self._one("SELECT COALESCE(MAX(id), 0) AS id FROM integration_runs WHERE integration = ?", (integration,))

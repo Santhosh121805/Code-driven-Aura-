@@ -52,6 +52,8 @@ class ActionRunner:
             return False
         if when.source_in is not None and event.get("source") not in when.source_in:
             return False
+        if when.type_not_in is not None and event.get("type") in when.type_not_in:
+            return False
         return True
 
     async def handle(self, event: dict[str, Any]) -> list[dict[str, Any]]:

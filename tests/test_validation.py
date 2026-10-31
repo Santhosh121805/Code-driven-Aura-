@@ -75,7 +75,7 @@ def test_base_url_may_reference_env():
 def test_mapping_fields_must_belong_to_the_entity():
     errs = errors_for(lambda d: stream(d)["mapping"].update(hostname="x"))
     assert errs == ["streams.0 mapping field(s) hostname are not part of the event schema; use: "
-                    "id, type, severity, timestamp, description, host, src_ip, dst_ip, user"]
+                    "id, type, severity, timestamp, description, host, src_ip, dst_ip, user, resource"]
     errs = errors_for(lambda d: stream(d).update(entity="user"))
     assert errs[0].startswith("streams.0 mapping field(s) type, timestamp, severity, description, user, src_ip are not part of the user schema")
 
@@ -83,7 +83,7 @@ def test_mapping_fields_must_belong_to_the_entity():
 def test_bad_jmespath_and_entity_messages():
     errs = errors_for(lambda d: stream(d)["mapping"].update(timestamp="detected_at["))
     assert any(e.startswith("streams.0.mapping.timestamp is not a valid JMESPath expression") for e in errs)
-    assert errors_for(lambda d: stream(d).update(entity="host")) == ["streams.0.entity must be one of: user, device, event"]
+    assert errors_for(lambda d: stream(d).update(entity="host")) == ["streams.0.entity must be one of: user, device, event, repository"]
 
 
 def test_streams_required_and_unique():

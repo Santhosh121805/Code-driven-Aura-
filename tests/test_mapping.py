@@ -38,7 +38,7 @@ def test_event_from_cloudtrail_record_keeps_source_and_fetched_at():
     row = normalise(record, cfg.streams[0], "aws_cloudtrail", "2026-10-31T06:00:00Z")
     assert row == {"id": "e-1", "type": "StopLogging", "severity": "critical", "timestamp": "2026-10-31T05:49:32Z",
                    "description": "StopLogging (cloudtrail.amazonaws.com)", "host": None, "src_ip": "45.155.205.233", "dst_ip": None,
-                   "user": "arn:aws:iam::491085362710:user/priya.sharma", "source": "aws_cloudtrail", "stream": "events",
+                   "user": "arn:aws:iam::491085362710:user/priya.sharma", "resource": None, "source": "aws_cloudtrail", "stream": "events",
                    "entity": "event", "fetched_at": "2026-10-31T06:00:00Z", "raw": record}
 
 

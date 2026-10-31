@@ -1,7 +1,8 @@
 """Integration + action config models (single source of truth), validation and secret resolution.
 
 An integration = shared connection settings (base_url, auth, headers, retry, rate limits, schedule) + one or more
-`streams`. Each stream pulls one endpoint and maps it to one entity of the common schema: user, device or event.
+`streams` (endpoints). Each stream pulls one endpoint and maps it to one entity of the common schema: user, device,
+event or repository. A stream can fan out (`for_each`): run once per record of another stream, e.g. per repository.
 """
 from __future__ import annotations
 
@@ -12,7 +13,7 @@ from typing import Annotated, Any, Callable, Literal, Union
 
 import jmespath
 import yaml
-from jinja2 import TemplateSyntaxError
+from jinja2 import TemplateSyntaxError, meta
 from jinja2.sandbox import SandboxedEnvironment
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -26,15 +27,21 @@ Severity = Literal["info", "low", "medium", "high", "critical"]
 SEVERITIES: tuple[str, ...] = ("info", "low", "medium", "high", "critical")
 
 # ---------------------------------------------------------------- common schema (PRD minimum + event extras)
-Entity = Literal["user", "device", "event"]
-ENTITIES: tuple[str, ...] = ("user", "device", "event")
+Entity = Literal["user", "device", "event", "repository"]
+ENTITIES: tuple[str, ...] = ("user", "device", "event", "repository")
 ENTITY_FIELDS: dict[str, tuple[str, ...]] = {
     "user": ("id", "name", "email", "status", "last_login"),
     "device": ("id", "hostname", "ip", "os", "owner", "last_seen"),
-    "event": ("id", "type", "severity", "timestamp", "description", "host", "src_ip", "dst_ip", "user"),
+    "event": ("id", "type", "severity", "timestamp", "description", "host", "src_ip", "dst_ip", "user", "resource"),
+    "repository": ("id", "full_name", "url", "description", "summary", "summary_source", "topics", "primary_language",
+                   "languages", "visibility", "is_fork", "is_archived", "default_branch", "stars", "forks", "open_issues",
+                   "created_at", "last_pushed_at", "dependabot_status"),
 }
-TIME_FIELD = {"user": "last_login", "device": "last_seen", "event": "timestamp"}
-DEFAULT_REQUIRED = {"user": ["id"], "device": ["id"], "event": ["id", "timestamp"]}
+STRUCTURED_FIELDS = {"repository": ("topics", "languages")}  # lists / maps, stored as JSON
+TIME_FIELD = {"user": "last_login", "device": "last_seen", "event": "timestamp", "repository": "last_pushed_at"}
+DEFAULT_REQUIRED = {"user": ["id"], "device": ["id"], "event": ["id", "timestamp"], "repository": ["id", "full_name"]}
+# Must be mapped in config (others have fallbacks: a missing id becomes a content hash, a missing event time = fetch time).
+MUST_MAP = {"repository": ["id", "full_name"]}
 
 # ---------------------------------------------------------------- secrets / env references
 ENV_REF = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
@@ -279,10 +286,49 @@ def _slug(v: str, example: str) -> str:
     return v
 
 
+PARAM_VARIABLES = {"last_sync", "last_sync_dt", "now", "now_dt", "days", "minutes"}  # see engine.template_context
+_jinja_vars = SandboxedEnvironment()
+
+
+def template_variables(text: str) -> set[str]:
+    """Top-level variables a Jinja template uses, e.g. {"repo"} for "/repos/{{ repo.full_name }}"."""
+    try:
+        return meta.find_undeclared_variables(_jinja_vars.parse(text))
+    except TemplateSyntaxError as exc:
+        raise ValueError(f"template syntax error: {exc.message}")
+
+
+class ForEach(_Model):
+    """Fan-out: run this stream once per record of another stream of the same integration (the parent runs first).
+    The endpoint and params may use the parent record, e.g. path: /repos/{{ repo.full_name }}/languages."""
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, serialize_by_alias=True)
+    stream: str = Field(description="Parent stream, e.g. repositories")
+    as_: str = Field(default="item", alias="as", description="Name of the parent record in templates, e.g. repo")
+    where: JmesPath | None = Field(default=None, description="Only parent records matching this JMESPath condition, e.g. !description")
+    concurrency: int = Field(default=4, ge=1, le=16, description="Parallel requests (rate limits and retries still apply)")
+    skip_status: list[int] = Field(default_factory=lambda: [403, 404],
+                                   description="Per-item HTTP errors that are recorded and skipped instead of failing the stream")
+    max_items: int = Field(default=500, ge=1, le=5000, description="Never fan out to more parent records than this per run")
+
+    @field_validator("as_")
+    @classmethod
+    def _as(cls, v: str) -> str:
+        if not re.fullmatch(r"[a-z][a-z0-9_]{0,30}", v) or v in PARAM_VARIABLES:
+            raise ValueError(f"must be a short lowercase name such as repo or item (not {', '.join(sorted(PARAM_VARIABLES))})")
+        return v
+
+
+class ParentStatus(_Model):
+    """Write each fan-out item's outcome into a field of its parent record, e.g. dependabot_status: enabled / disabled."""
+    field: str
+    ok: str = "ok"
+    by_status: dict[int, str] = Field(default_factory=dict, description="HTTP status -> value, e.g. {403: disabled, 404: no access}")
+
+
 class Stream(_Model):
     name: str = Field(description="Stream id within the integration, e.g. users or events")
     entity: Entity = "event"
-    endpoint: str = Field(min_length=1)
+    endpoint: str = Field(min_length=1, description="Path after base_url (also accepted as `path`)")
     method: Literal["GET", "POST"] = "GET"
     params: dict[str, Any] = Field(default_factory=dict)
     headers: Headers = Field(default_factory=dict)
@@ -295,6 +341,19 @@ class Stream(_Model):
     transforms: Transforms = Field(default_factory=Transforms)
     requires_env: list[str] = Field(default_factory=list, description="Skip this stream unless these variables are set (e.g. GITHUB_ORG)")
     fallback_for: str | None = Field(default=None, description="Only run when the named stream was unavailable (HTTP 403/404) this run")
+    for_each: ForEach | None = Field(default=None, description="Run once per record of another stream")
+    merge_into_parent: bool = Field(default=False, description="Merge the mapped fields into the parent record instead of adding rows")
+    parent_status: ParentStatus | None = Field(default=None, description="Record each item's outcome in a parent field")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _path_alias(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "path" in data:
+            data = dict(data)
+            if "endpoint" in data:
+                raise ValueError("set either endpoint or path, not both")
+            data["endpoint"] = data.pop("path")
+        return data
 
     @field_validator("name")
     @classmethod
@@ -319,6 +378,24 @@ class Stream(_Model):
         bad = [f for f in (self.required_fields or []) if f not in allowed]
         if bad:
             raise ValueError(f"required_fields {', '.join(bad)} are not part of the {self.entity} schema")
+        if not self.merge_into_parent:
+            unmapped = [f for f in (self.required_fields or MUST_MAP.get(self.entity, [])) if f not in self.mapping]
+            if unmapped:
+                raise ValueError(f"a {self.entity} needs {', '.join(unmapped)} mapped (required field)")
+        # Templating is sandboxed and may only use the parent record: no settings, no other data.
+        used = template_variables(self.endpoint)
+        allowed_vars = {self.for_each.as_} if self.for_each else set()
+        if used - allowed_vars:
+            hint = f"only {{{{ {self.for_each.as_}.<field> }}}} is available" if self.for_each else \
+                "placeholders need for_each (run for each record of another stream)"
+            raise ValueError(f"endpoint uses {', '.join(sorted(used - allowed_vars))}: {hint}")
+        for key, value in self.params.items():
+            if isinstance(value, str) and "{{" in value:
+                extra = template_variables(value) - PARAM_VARIABLES - allowed_vars
+                if extra:
+                    raise ValueError(f"param {key} uses unknown variable(s) {', '.join(sorted(extra))}")
+        if (self.merge_into_parent or self.parent_status) and not self.for_each:
+            raise ValueError("merge_into_parent and parent_status need for_each")
         return self
 
     @property
@@ -368,13 +445,47 @@ class IntegrationConfig(_Model):
         names = [s.name for s in self.streams]
         if len(names) != len(set(names)):
             raise ValueError(f"stream names must be unique (got {', '.join(names)})")
+        by_name = {s.name: s for s in self.streams}
         for s in self.streams:
             if s.fallback_for and s.fallback_for not in names:
                 raise ValueError(f"stream {s.name}: fallback_for '{s.fallback_for}' is not a stream of this integration")
+            if not s.for_each:
+                continue
+            parent = by_name.get(s.for_each.stream)
+            if parent is None or parent is s:
+                raise ValueError(f"stream {s.name}: for_each stream '{s.for_each.stream}' must be another stream of this integration")
+            if (s.merge_into_parent or s.parent_status) and parent.entity == "event":
+                raise ValueError(f"stream {s.name}: events are immutable, so it cannot write into its parent '{parent.name}'")
+            if s.merge_into_parent and s.entity != parent.entity:
+                raise ValueError(f"stream {s.name}: merge_into_parent needs entity {parent.entity} (the parent's)")
+            if s.parent_status and s.parent_status.field not in ENTITY_FIELDS[parent.entity]:
+                raise ValueError(f"stream {s.name}: parent_status field '{s.parent_status.field}' is not a {parent.entity} field")
+        self.ordered_streams()  # raises on a for_each cycle
         return self
 
     def stream(self, name: str) -> Stream:
         return next(s for s in self.streams if s.name == name)
+
+    def ordered_streams(self) -> list[Stream]:
+        """Streams in run order: config order, except that a for_each stream always runs after its parent."""
+        by_name = {s.name: s for s in self.streams}
+        done: list[Stream] = []
+        visiting: set[str] = set()
+
+        def visit(s: Stream) -> None:
+            if s in done:
+                return
+            if s.name in visiting:
+                raise ValueError(f"for_each streams form a cycle at '{s.name}'")
+            visiting.add(s.name)
+            if s.for_each and s.for_each.stream in by_name:
+                visit(by_name[s.for_each.stream])
+            visiting.discard(s.name)
+            done.append(s)
+
+        for s in self.streams:
+            visit(s)
+        return done
 
 
 def env_refs(value: Any) -> set[str]:
@@ -413,6 +524,7 @@ def missing_settings(cfg: IntegrationConfig) -> list[str]:
 class ActionWhen(_Model):
     severity_in: list[Severity] | None = None
     source_in: list[str] | None = None
+    type_not_in: list[str] | None = Field(default=None, description="Never fire for these event types, e.g. dependabot_alert")
 
 
 class ActionRequest(_Model):

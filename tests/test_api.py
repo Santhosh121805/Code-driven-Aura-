@@ -10,7 +10,7 @@ client = signed_in(TestClient(app))
 def test_schema_endpoint_describes_streams():
     schema = client.get("/api/schema").json()
     assert schema["title"] == "IntegrationConfig" and {"auth", "streams", "rate_limit", "retry"} <= set(schema["properties"])
-    assert schema["$defs"]["Stream"]["properties"]["entity"]["enum"] == ["user", "device", "event"]
+    assert schema["$defs"]["Stream"]["properties"]["entity"]["enum"] == ["user", "device", "event", "repository"]
 
 
 def test_validate_returns_friendly_errors():

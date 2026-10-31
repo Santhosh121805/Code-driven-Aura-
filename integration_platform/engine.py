@@ -1,7 +1,8 @@
 """Generic engine: runs ANY integration config, stream by stream.
 
 auth -> build request -> paginate -> retries / rate limits (identical for every connector) -> extract records
--> (custom step) -> normalise per entity -> quarantine bad records -> store users / devices / events.
+-> (custom step) -> normalise per entity -> quarantine bad records -> store users / devices / events / repositories.
+for_each streams fan out: one request chain per parent record, a bounded number at a time, parents first.
 """
 from __future__ import annotations
 
@@ -14,10 +15,11 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import quote, urljoin, urlsplit
 
 import httpx
 import jmespath
+from jinja2 import StrictUndefined, TemplateError
 from jinja2.sandbox import SandboxedEnvironment
 
 from integration_platform.config import (
@@ -27,12 +29,15 @@ from integration_platform.config import (
 )
 from integration_platform import logmask
 from integration_platform.logmask import mask_text
-from integration_platform.normaliser import BadRecord, normalise
+from integration_platform.normaliser import BadRecord, normalise, search
 
 log = logging.getLogger("engine")
 TRANSIENT_STATUS = {500, 502, 503, 504}
 Sleep = Callable[[float], Awaitable[None]]
 _jinja = SandboxedEnvironment()
+# Endpoint paths of for_each streams: sandboxed, parent-record fields only, every value URL-quoted ('/' kept for owner/repo).
+_path_jinja = SandboxedEnvironment(undefined=StrictUndefined, autoescape=False,
+                                   finalize=lambda v: quote(str(v), safe="/@:") if v is not None else "")
 _oauth_cache: dict[tuple[str, str], tuple[str, float]] = {}  # (token_url, client_id) -> (token, expires_at)
 _session_cache: dict[tuple[str, str], tuple[str, float]] = {}  # (login_url, auth config) -> (token, expires_at)
 
@@ -42,9 +47,10 @@ class EngineError(Exception):
 
 
 class HTTPStatusError(EngineError):
-    def __init__(self, message: str, status: int):
+    def __init__(self, message: str, status: int, detail: str = ""):
         super().__init__(message)
         self.status = status
+        self.short = f"HTTP {status}: {detail}" if detail else f"HTTP {status}"  # e.g. "HTTP 404: Not Found"
 
 
 class AuthError(HTTPStatusError):
@@ -168,7 +174,10 @@ async def send_with_retry(client: httpx.AsyncClient, method: str, url: str, retr
                 stats.retries += 1
                 stats.retry_log.append(f"HTTP 429: waited {wait:g}s due to {why}")
                 log.info("HTTP 429 from %s: waited %gs due to %s", url.split("?")[0], wait, why)
+                hold = stats.not_before = max(stats.not_before, time.time() + wait)  # parallel for_each requests wait too
                 await sleep(wait)
+                if stats.not_before == hold:
+                    stats.not_before = 0.0
                 continue
             if resp.status_code not in TRANSIENT_STATUS:
                 _note_remaining(resp, rate, stats)
@@ -185,14 +194,27 @@ async def send_with_retry(client: httpx.AsyncClient, method: str, url: str, retr
         await sleep(delay)
 
 
+def _error_detail(resp: httpx.Response) -> str:
+    """The API's own short error message (JSON message/error field), for skip reasons like "Dependabot alerts are disabled"."""
+    try:
+        body = resp.json()
+    except ValueError:
+        return mask_text(resp.text.strip()[:120])
+    if isinstance(body, dict):
+        msg = body.get("message") or body.get("error_description") or body.get("error") or body.get("detail")
+        if isinstance(msg, str):
+            return mask_text(msg.strip()[:160])
+    return ""
+
+
 def check_response(resp: httpx.Response, auth_hint: str = "") -> Any:
     """Raise a clear error for non-2xx responses, else return parsed JSON."""
     url = str(resp.request.url).split("?")[0]
     if resp.status_code in (401, 403):
         raise AuthError(f"Authentication failed: HTTP {resp.status_code} {resp.reason_phrase} from {url} (not retried). {auth_hint}".strip(),
-                        resp.status_code)
+                        resp.status_code, _error_detail(resp))
     if resp.status_code >= 400:
-        raise HTTPStatusError(f"HTTP {resp.status_code} from {url}: {resp.text[:200]}", resp.status_code)
+        raise HTTPStatusError(f"HTTP {resp.status_code} from {url}: {resp.text[:200]}", resp.status_code, _error_detail(resp))
     try:
         return resp.json()
     except ValueError:
@@ -343,32 +365,59 @@ def page_params(p: Any, base: dict[str, Any], index: int, cursor: str | None) ->
     return params
 
 
-class _Request:
-    """Resolved connection details for one stream (base URL, headers, auth)."""
+class ItemError(EngineError):
+    """One for_each item could not be requested (e.g. its endpoint template needs a field the record lacks)."""
 
-    def __init__(self, cfg: IntegrationConfig, stream: Stream):
+
+def render_path(stream: Stream, item: Any) -> str:
+    """Endpoint path of one for_each item: {{ repo.full_name }} -> octo/demo. Only the parent record is available."""
+    endpoint = resolve_env(stream.endpoint)  # settings first: a parent value can never expand into a ${SECRET}
+    if not stream.for_each or "{{" not in endpoint:
+        return endpoint
+    try:
+        path = _path_jinja.from_string(endpoint).render({stream.for_each.as_: item})
+    except TemplateError as exc:
+        raise ItemError(f"cannot build the path from this record: {exc}")
+    if "/../" in f"{path}/" or "/./" in f"{path}/":
+        raise ItemError(f"refusing path {path!r}: relative segments are not allowed")
+    return path
+
+
+class _Request:
+    """Resolved connection details for one stream (base URL, headers, auth); `item` = parent record of a for_each stream."""
+
+    def __init__(self, cfg: IntegrationConfig, stream: Stream, item: Any = None):
         try:
             self.base_url = resolve_env(cfg.base_url).rstrip("/")
-            self.url = self.base_url + resolve_env(stream.endpoint)
+            self.path = render_path(stream, item)
+            self.url = self.base_url + self.path
             self.headers = {k: resolve_env(v) for k, v in {**cfg.headers, **stream.headers}.items()}
         except MissingSecretError as exc:
             raise NotConfiguredError(f"Not configured: {exc}")
 
 
+def _param_context(stream: Stream, last_sync: str | None, item: Any) -> dict[str, Any]:
+    context = template_context(last_sync)
+    if stream.for_each:
+        context[stream.for_each.as_] = item
+    return context
+
+
 async def fetch_records(cfg: IntegrationConfig, stream: Stream, last_sync: str | None = None,
                         transport: httpx.AsyncBaseTransport | None = None, record_limit: int | None = None,
-                        sleep: Sleep = asyncio.sleep, stats: Stats | None = None) -> tuple[list[Any], Stats]:
-    """Fetch all pages of one stream. Pass `stats` to keep page/retry counts even when the fetch fails."""
+                        sleep: Sleep = asyncio.sleep, stats: Stats | None = None, item: Any = None) -> tuple[list[Any], Stats]:
+    """Fetch all pages of one stream (for a for_each stream: of one parent `item`).
+    Pass `stats` to keep page/retry counts even when the fetch fails."""
     stats = stats if stats is not None else Stats()
     p = stream.pagination
     max_pages = 1 if isinstance(p, PaginationNone) else p.max_pages
     records: list[Any] = []
-    req = _Request(cfg, stream)
+    req = _Request(cfg, stream, item)
     try:
         async with httpx.AsyncClient(timeout=stream.timeout_seconds, transport=transport, follow_redirects=True) as client:
             auth_headers, auth = await apply_auth(client, cfg.auth, req.base_url, cfg.retry, stats, sleep, scopes=cfg.scopes)
             headers = {**req.headers, **auth_headers}
-            base_params = render_params(stream.params, template_context(last_sync))
+            base_params = render_params(stream.params, _param_context(stream, last_sync, item))
             hint = _auth_hint(cfg.auth)
             cursor: str | None = None
             page_url = req.url
@@ -419,15 +468,28 @@ async def fetch_records(cfg: IntegrationConfig, stream: Stream, last_sync: str |
     return records, stats
 
 
+async def sample_parent(cfg: IntegrationConfig, stream: Stream, transport: httpx.AsyncBaseTransport | None = None) -> Any:
+    """A parent record to try a for_each stream with: the first matching record of the parent's first page."""
+    fe = stream.for_each
+    parent = cfg.stream(fe.stream)
+    body, _ = await fetch_sample(cfg, cfg.streams.index(parent), transport)
+    for record in extract_records(body, parent.records_path):
+        if not fe.where or search(fe.where, record):
+            return record
+    raise EngineError(f"{parent.name} returned no record to run {stream.name} for" + (f" (where: {fe.where})" if fe.where else ""))
+
+
 async def fetch_sample(cfg: IntegrationConfig, stream_index: int = 0, transport: httpx.AsyncBaseTransport | None = None) -> tuple[Any, bool]:
-    """Fetch only the first page of one stream. Returns (raw JSON body, has a Link rel="next" header)."""
+    """Fetch only the first page of one stream (a for_each stream: for the parent's first record).
+    Returns (raw JSON body, has a Link rel="next" header)."""
     stream = cfg.streams[stream_index]
     stats = Stats()
-    req = _Request(cfg, stream)
+    item = await sample_parent(cfg, stream, transport) if stream.for_each else None
+    req = _Request(cfg, stream, item)
     try:
         async with httpx.AsyncClient(timeout=stream.timeout_seconds, transport=transport, follow_redirects=True) as client:
             auth_headers, auth = await apply_auth(client, cfg.auth, req.base_url, cfg.retry, stats, scopes=cfg.scopes)
-            params = page_params(stream.pagination, render_params(stream.params, template_context(None)), 0, None)
+            params = page_params(stream.pagination, render_params(stream.params, _param_context(stream, None, item)), 0, None)
             resp = await send_with_retry(client, stream.method, req.url, cfg.retry, stats, rate=cfg.rate_limit, params=params,
                                          headers={**req.headers, **auth_headers}, auth=auth,
                                          json=stream.body if stream.method == "POST" else None)
@@ -476,12 +538,14 @@ def guard_event(cfg: IntegrationConfig, run_id: int, detail: dict[str, Any], fet
 
 
 # ---------------------------------------------------------------- run / test
-def _skip_reason(stream: Stream, unavailable: set[str]) -> str | None:
+def _skip_reason(stream: Stream, unavailable: set[str], parents: dict[str, Any] | None = None) -> str | None:
     missing = [v for v in stream.requires_env if not lookup_ref(v)]
     if missing:
         return f"skipped: {', '.join(missing)} not set"
     if stream.fallback_for and stream.fallback_for not in unavailable:
         return f"skipped: {stream.fallback_for} is available"
+    if stream.for_each and parents is not None and stream.for_each.stream not in parents:
+        return f"skipped: {stream.for_each.stream} did not run"
     return None
 
 
@@ -489,76 +553,205 @@ def _is_fallback_target(cfg: IntegrationConfig, stream: Stream) -> bool:
     return any(s.fallback_for == stream.name for s in cfg.streams)
 
 
+@dataclass
+class FanOut:
+    """Outcome of one for_each stream: records per parent item, plus items skipped (403/404...) or failed."""
+    eligible: int = 0
+    results: list[tuple[int, Any, list[Any]]] = field(default_factory=list)  # (item index, parent record, records)
+    outcomes: list[tuple[Any, int | str]] = field(default_factory=list)  # (parent record, "ok" | HTTP status)
+    skipped: list[dict[str, Any]] = field(default_factory=list)  # {item, status, reason}
+    errors: list[str] = field(default_factory=list)
+
+    def summary(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"items": len(self.outcomes) + sum(1 for s in self.skipped if s["status"] is None),
+                               "eligible": self.eligible, "skipped": len(self.skipped)}
+        if self.skipped:
+            reasons: dict[str, int] = {}
+            for s in self.skipped:
+                reasons[s["reason"]] = reasons.get(s["reason"], 0) + 1
+            out["skipped_reasons"] = reasons
+            out["skipped_items"] = self.skipped[:25]
+        if self.errors:
+            out["item_errors"] = self.errors[:10]
+        return out
+
+
+def _item_label(stream: Stream, item: Any) -> str:
+    try:
+        return render_path(stream, item)
+    except Exception:
+        return stream.endpoint
+
+
+async def fan_out(cfg: IntegrationConfig, stream: Stream, parents: list[Any], last_sync: str | None,
+                  transport: httpx.AsyncBaseTransport | None, sleep: Sleep, stats: Stats,
+                  record_limit: int | None = None, max_items: int | None = None) -> FanOut:
+    """Run `stream` once per parent record (filtered by for_each.where), at most for_each.concurrency at a time.
+    Rate limits, Retry-After and the 1s/2s/4s retries apply to every request (shared `stats` holds the slow-downs).
+    Per-item HTTP errors in skip_status are recorded and skipped; 401, exhausted rate limits and network failure
+    stop the stream like they would for a normal stream."""
+    fe = stream.for_each
+    items = [p for p in parents if not fe.where or search(fe.where, p)]
+    out = FanOut(eligible=len(items))
+    items = items[:min(fe.max_items, max_items or fe.max_items)]
+    gate = asyncio.Semaphore(fe.concurrency)
+    fatal: list[EngineError] = []
+
+    async def one(index: int, item: Any) -> None:
+        async with gate:
+            if fatal:
+                return
+            label = _item_label(stream, item)
+            try:
+                records, _ = await fetch_records(cfg, stream, last_sync, transport, record_limit, sleep, stats, item=item)
+            except ItemError as exc:
+                out.skipped.append({"item": label, "status": None, "reason": str(exc)})
+            except HTTPStatusError as exc:
+                if exc.status in fe.skip_status:
+                    out.outcomes.append((item, exc.status))
+                    out.skipped.append({"item": label, "status": exc.status, "reason": exc.short})
+                elif isinstance(exc, AuthError) or exc.status == 429:
+                    fatal.append(exc)  # the credential or the quota is the problem: every other item would fail too
+                else:
+                    out.outcomes.append((item, exc.status))
+                    out.errors.append(f"{label}: {mask_text(str(exc))}")
+            except (TransientError, NotConfiguredError) as exc:
+                fatal.append(exc)
+            except EngineError as exc:
+                out.errors.append(f"{label}: {mask_text(str(exc))}")
+            else:
+                out.outcomes.append((item, "ok"))
+                out.results.append((index, item, records))
+
+    await asyncio.gather(*(one(i, item) for i, item in enumerate(items)))
+    if fatal:
+        raise fatal[0]
+    out.results.sort(key=lambda r: r[0])
+    return out
+
+
+def _relearn_baseline_on_change(cfg: IntegrationConfig, db: Any) -> None:
+    """Adding or removing endpoints legitimately changes a connector's volume: re-learn the guard baseline then."""
+    previous = db.last_run_streams(cfg.name)
+    if previous is not None and set(previous) != {s.name for s in cfg.streams}:
+        log.info("%s: endpoints changed (%s -> %s), re-learning the exfiltration-guard baseline",
+                 cfg.name, ", ".join(previous), ", ".join(s.name for s in cfg.streams))
+        db.restart_baseline(cfg.name)
+
+
 async def run_integration(cfg: IntegrationConfig, db: Any, on_new_event: OnNewEvent | None = None,
                           transport: httpx.AsyncBaseTransport | None = None, sleep: Sleep = asyncio.sleep) -> dict[str, Any]:
-    """Fetch every stream, normalise, quarantine bad records, store (deduplicated) and trigger actions for new events.
-    Never raises: errors go to the run record and the health page."""
+    """Fetch every stream (parents before their for_each children), normalise, quarantine bad records, store
+    (deduplicated) and trigger actions for new events. Never raises: errors go to the run record and the health page."""
     run_id = db.start_run(cfg.name)
     started = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     stats = Stats()
+    _relearn_baseline_on_change(cfg, db)
     history = db.baseline_counts(cfg.name, cfg.exfiltration_guard.baseline_runs)  # before this run is recorded
     streams: list[dict[str, Any]] = []
     errors: list[str] = []
     unavailable: set[str] = set()
-    fetched = new = quarantined = 0
+    parents: dict[str, list[tuple[Any, str]]] = {}  # stream -> [(raw record, stored id)] fetched this run
+    fetched = new = quarantined = skipped_items = 0
     fatal = False
-    for stream in cfg.streams:
-        result: dict[str, Any] = {"name": stream.name, "entity": stream.entity, "fetched": 0, "new": 0, "updated": 0, "quarantined": 0}
+    for stream in cfg.ordered_streams():
+        fe = stream.for_each
+        result: dict[str, Any] = {"name": stream.name, "entity": stream.entity, "path": stream.endpoint,
+                                  "fetched": 0, "new": 0, "updated": 0, "quarantined": 0}
+        if fe:
+            result["for_each"] = fe.stream
         streams.append(result)
         if fatal:
             result["status"] = "not run"
             continue
-        if reason := _skip_reason(stream, unavailable):
+        if reason := _skip_reason(stream, unavailable, parents):
             result["status"] = reason
             continue
+        fan: FanOut | None = None
         try:
             pages_before = stats.pages
-            records, _ = await fetch_records(cfg, stream, db.get_last_sync(f"{cfg.name}:{stream.name}"), transport, sleep=sleep, stats=stats)
+            last_sync = db.get_last_sync(f"{cfg.name}:{stream.name}")
+            if fe:
+                fan = await fan_out(cfg, stream, [r for r, _ in parents[fe.stream]], last_sync, transport, sleep, stats)
+                batches = [(item, records) for _, item, records in fan.results]
+            else:
+                records, _ = await fetch_records(cfg, stream, last_sync, transport, sleep=sleep, stats=stats)
+                batches = [(None, records)]
             result["pages"] = stats.pages - pages_before
         except HTTPStatusError as exc:
             if exc.status in (403, 404) and _is_fallback_target(cfg, stream):
                 unavailable.add(stream.name)
                 result["status"] = f"not available (HTTP {exc.status}), using fallback"
                 continue
-            result["status"] = "error"
-            errors.append(f"{stream.name}: {mask_text(str(exc))}")
+            result["status"], result["error"] = "error", mask_text(str(exc))
+            errors.append(f"{stream.name}: {result['error']}")
             fatal = isinstance(exc, AuthError)  # every other stream would fail the same way
             continue
         except (TransientError, NotConfiguredError) as exc:
-            result["status"] = "error"
-            errors.append(f"{stream.name}: {mask_text(str(exc))}")
+            result["status"], result["error"] = "error", mask_text(str(exc))
+            errors.append(f"{stream.name}: {result['error']}")
             fatal = True
             continue
         except EngineError as exc:
-            result["status"] = "error"
-            errors.append(f"{stream.name}: {mask_text(str(exc))}")
+            result["status"], result["error"] = "error", mask_text(str(exc))
+            errors.append(f"{stream.name}: {result['error']}")
             continue
         except Exception as exc:  # unexpected bug: record it instead of crashing the scheduler
             log.exception("integration %s stream %s crashed", cfg.name, stream.name)
-            result["status"] = "error"
-            errors.append(f"{stream.name}: Unexpected error: {mask_text(f'{type(exc).__name__}: {exc}')}")
+            result["status"], result["error"] = "error", f"Unexpected error: {mask_text(f'{type(exc).__name__}: {exc}')}"
+            errors.append(f"{stream.name}: {result['error']}")
             continue
-        for record in records:
-            try:
-                row = normalise(record, stream, cfg.name, started)
-            except BadRecord as exc:  # bad data never stops the run: park it with the reason
-                db.quarantine(cfg.name, run_id, record, str(exc), stream.name, stream.entity)
-                result["quarantined"] += 1
-                continue
-            outcome = db.store(row)
-            if outcome in ("new", "updated"):
-                result[outcome] += 1
-            if outcome == "new" and stream.entity == "event" and on_new_event:
+        parent_ids = {id(raw): pid for raw, pid in parents.get(fe.stream, [])} if fe else {}
+        parent_entity = cfg.stream(fe.stream).entity if fe else None
+        kept: list[tuple[Any, str]] = []
+        total = 0
+        for parent, records in batches:
+            for record in records:
+                total += 1
                 try:
-                    await on_new_event(row)
-                except Exception:  # an action failure must never fail ingestion
-                    log.exception("action handling failed for %s/%s", row["source"], row["id"])
-        result["fetched"] = len(records)
+                    row = normalise(record, stream, cfg.name, started, parent)
+                except BadRecord as exc:  # bad data never stops the run: park it with the reason
+                    db.quarantine(cfg.name, run_id, record, str(exc), stream.name, stream.entity)
+                    result["quarantined"] += 1
+                    continue
+                if stream.merge_into_parent:
+                    merged = db.merge_fields(parent_entity, cfg.name, parent_ids[id(parent)], {f: row[f] for f in stream.mapping})
+                    outcome = "updated" if merged else "missing"
+                else:
+                    outcome = db.store(row, stream.mapping.keys())
+                    kept.append((record, row["id"]))
+                if outcome in ("new", "updated"):
+                    result[outcome] += 1
+                if outcome == "new" and stream.entity == "event" and on_new_event:
+                    try:
+                        await on_new_event(row)
+                    except Exception:  # an action failure must never fail ingestion
+                        log.exception("action handling failed for %s/%s", row["source"], row["id"])
+        parents[stream.name] = kept
+        notes: list[str] = []
+        if fan:
+            if stream.parent_status:
+                ps = stream.parent_status
+                for parent, outcome in fan.outcomes:
+                    value = ps.ok if outcome == "ok" else ps.by_status.get(outcome)
+                    if value:
+                        db.merge_fields(parent_entity, cfg.name, parent_ids[id(parent)], {ps.field: value})
+            result.update(fan.summary())
+            skipped_items += len(fan.skipped)
+            notes.append(f"ran for {result['items']} of {fan.eligible} {fe.stream} record(s)")
+            if fan.skipped:
+                notes.append(f"{len(fan.skipped)} item(s) skipped: " + "; ".join(f"{n} x {r}" for r, n in result["skipped_reasons"].items()))
+            if fan.errors:
+                result["error"] = f"{len(fan.errors)} item(s) failed: {fan.errors[0]}"
+                errors.append(f"{stream.name}: {result['error']}")
+        result["fetched"] = total
         result["status"] = "ok"
         if result["quarantined"]:
-            result["note"] = f"{result['quarantined']} of {len(records)} invalid (quarantined)"
+            notes.append(f"{result['quarantined']} of {total} invalid (quarantined)")
+        if notes:
+            result["note"] = "; ".join(notes)
         db.set_last_sync(f"{cfg.name}:{stream.name}", started)
-        fetched += len(records)
+        fetched += total
         new += result["new"]
         quarantined += result["quarantined"]
 
@@ -577,48 +770,74 @@ async def run_integration(cfg: IntegrationConfig, db: Any, on_new_event: OnNewEv
     else:
         status = "suspicious" if suspicious else "success"
     error = "; ".join(errors) or None
-    detail = {"streams": streams, "retry_log": stats.retry_log[-20:]}
+    detail = {"streams": streams, "retry_log": stats.retry_log[-20:], "skipped_items": skipped_items}
     if suspicious:
         detail["guard"] = suspicious
     db.finish_run(run_id, status, fetched, new, stats.pages, stats.retries, error, quarantined, detail)
     return {"status": status, "error": error, "records_fetched": fetched, "records_new": new, "pages": stats.pages,
             "retries": stats.retries, "quarantined": quarantined, "suspicious": suspicious, "streams": streams,
-            "retry_log": stats.retry_log}
+            "skipped_items": skipped_items, "retry_log": stats.retry_log}
+
+
+DRY_RUN_ITEMS = 3  # a test run fans out to the first few parent records only
 
 
 async def dry_run_integration(cfg: IntegrationConfig, sample_size: int = 5, transport: httpx.AsyncBaseTransport | None = None) -> dict[str, Any]:
-    """Run every stream once WITHOUT saving: first `sample_size` raw + normalised records per stream."""
+    """Run every stream once WITHOUT saving: first `sample_size` raw + normalised records per stream
+    (for_each streams: for the first few parent records)."""
     streams: list[dict[str, Any]] = []
     unavailable: set[str] = set()
     errors: list[str] = []
-    for stream in cfg.streams:
-        if reason := _skip_reason(stream, unavailable):
-            streams.append({"name": stream.name, "entity": stream.entity, "status": reason})
+    parents: dict[str, list[Any]] = {}
+    for stream in cfg.ordered_streams():
+        base = {"name": stream.name, "entity": stream.entity, "path": stream.endpoint}
+        if reason := _skip_reason(stream, unavailable, parents):
+            streams.append({**base, "status": reason})
             continue
+        stats = Stats()
+        fan: FanOut | None = None
         try:
-            records, stats = await fetch_records(cfg, stream, None, transport=transport, record_limit=sample_size)
+            if stream.for_each:
+                fan = await fan_out(cfg, stream, parents[stream.for_each.stream], None, transport, asyncio.sleep, stats,
+                                    record_limit=sample_size, max_items=DRY_RUN_ITEMS)
+                batches = [(item, records) for _, item, records in fan.results]
+            else:
+                records, stats = await fetch_records(cfg, stream, None, transport=transport, record_limit=sample_size, stats=stats)
+                batches = [(None, records)]
         except HTTPStatusError as exc:
             if exc.status in (403, 404) and _is_fallback_target(cfg, stream):
                 unavailable.add(stream.name)
-                streams.append({"name": stream.name, "entity": stream.entity, "status": f"not available (HTTP {exc.status})"})
+                streams.append({**base, "status": f"not available (HTTP {exc.status})"})
                 continue
             errors.append(f"{stream.name}: {exc}")
+            streams.append({**base, "status": "error", "error": str(exc)})
             continue
         except EngineError as exc:
             errors.append(f"{stream.name}: {exc}")
+            streams.append({**base, "status": "error", "error": str(exc)})
             continue
-        raw, normalised, bad = [], [], []
-        for r in records[:sample_size]:
-            try:
-                row = normalise(r, stream, cfg.name)
-            except BadRecord as exc:
-                bad.append({"raw": r, "reason": str(exc)})
-                continue
-            row.pop("raw")
-            raw.append(r)
-            normalised.append(row)
-        streams.append({"name": stream.name, "entity": stream.entity, "status": "ok", "raw": raw, "normalised": normalised,
-                        "quarantined": bad, "pages": stats.pages, "retries": stats.retries, "retry_log": stats.retry_log})
+        raw, normalised, bad, kept = [], [], [], []
+        for parent, records in batches:
+            for r in records:
+                kept.append(r)
+                if len(raw) + len(bad) >= sample_size:
+                    continue
+                try:
+                    row = normalise(r, stream, cfg.name, parent=parent)
+                except BadRecord as exc:
+                    bad.append({"raw": r, "reason": str(exc)})
+                    continue
+                row.pop("raw")
+                raw.append(r)
+                normalised.append(row)
+        parents[stream.name] = kept
+        entry = {**base, "status": "ok", "raw": raw, "normalised": normalised, "quarantined": bad,
+                 "pages": stats.pages, "retries": stats.retries, "retry_log": stats.retry_log}
+        if fan:
+            entry.update(fan.summary(), for_each=stream.for_each.stream)
+            if fan.errors:
+                errors.append(f"{stream.name}: {fan.errors[0]}")
+        streams.append(entry)
     ok = [s for s in streams if s.get("status") == "ok"]
     if not ok:
         return {"ok": False, "stage": "fetch", "errors": errors or ["No stream could run (check requires_env / fallback settings)"],
