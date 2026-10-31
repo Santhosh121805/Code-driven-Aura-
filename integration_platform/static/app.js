@@ -1300,9 +1300,9 @@ async function resetDemo() {
 }
 
 /* ------------------------------------------------------------------ theme, sidebar, session */
-function setTheme(theme) {
+function setTheme(theme, remember = true) {
   document.documentElement.dataset.theme = theme;
-  storeSet("theme", theme);
+  if (remember) storeSet("theme", theme);  // only an explicit toggle saves; otherwise the system setting keeps applying
   const next = theme === "dark" ? "light" : "dark";
   $("#themeBtn").innerHTML = `${icon(next === "light" ? "sun" : "moon")}<span class="nav-label">${cap(next)} theme</span>`;
   $("#themeBtn").title = `Switch to the ${next} theme`;
@@ -1348,7 +1348,7 @@ function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTi
 
 function boot() {
   hydrateIcons();
-  setTheme(document.documentElement.dataset.theme || "dark");
+  setTheme(document.documentElement.dataset.theme || "dark", false);
   setCollapsed(storeGet("sidebarCollapsed", false));
   setYamlOpen(storeGet("yamlOpen", true));
 

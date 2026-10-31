@@ -148,3 +148,15 @@ def test_dashboard_screenshots_are_local_files():
     for shot in ("overview", "integrations", "events"):
         assert (STATIC / "shots" / f"{shot}.png").stat().st_size > 10_000
     assert "/static/shots/overview.png" in page and "http" not in page.split('id="shotImg"')[1].split(">")[0]
+
+
+def test_theme_is_set_before_first_paint_and_shared_with_the_app():
+    """No flash: an inline <head> script picks the saved theme (else the system setting) before any stylesheet loads."""
+    for name in ("landing.html", "docs.html", "login.html", "index.html"):
+        html = (STATIC / name).read_text(encoding="utf-8")
+        head = html.split("</head>")[0]
+        script = head.index('localStorage.getItem("theme")')
+        assert script < head.index('rel="stylesheet"'), name
+        assert "prefers-color-scheme: light" in head and "try {" in head, name
+    for name in ("landing.html", "docs.html", "login.html"):
+        assert 'class="icon-btn theme-toggle"' in (STATIC / name).read_text(encoding="utf-8"), name

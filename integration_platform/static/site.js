@@ -11,6 +11,8 @@ const SVG = {
   eyeOff: '<path d="M3 3l18 18M10.6 5.1A10.6 10.6 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.1 3.9M6.6 6.6C3.9 8.4 2 12 2 12s3.6 7 10 7a9.7 9.7 0 0 0 4.4-1.1"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
   copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>',
   check: '<path d="m5 12 5 5 9-10"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/>',
 };
 const icon = (name) => `<span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true">${SVG[name]}</svg></span>`;
 
@@ -28,6 +30,33 @@ function onceVisible(el, fn, threshold = 0.25) {
     if (entries.some((e) => e.isIntersecting)) { io.disconnect(); fn(); }
   }, { threshold });
   io.observe(el);
+}
+
+/* ------------------------------------------------------------------ theme (same "theme" key as the app) */
+function initTheme() {
+  const root = document.documentElement;
+  const meta = $('meta[name="theme-color"]');
+  const paint = (theme) => {
+    root.dataset.theme = theme;
+    if (meta) meta.content = theme === "light" ? "#FAFAFA" : "#000000";
+    const next = theme === "dark" ? "light" : "dark";
+    $$(".theme-toggle").forEach((b) => {
+      b.innerHTML = icon(next === "light" ? "sun" : "moon");
+      b.title = `Switch to the ${next} theme`;
+      b.setAttribute("aria-label", b.title);
+    });
+  };
+  paint(root.dataset.theme === "light" ? "light" : "dark");
+  $$(".theme-toggle").forEach((b) => b.addEventListener("click", () => {
+    const theme = root.dataset.theme === "light" ? "dark" : "light";
+    root.classList.add("theme-anim");  // 200 ms colour transition only while switching
+    paint(theme);
+    storeSet("theme", theme);
+    setTimeout(() => root.classList.remove("theme-anim"), 260);
+  }));
+  // No saved choice yet: keep following the system setting.
+  const mq = window.matchMedia && matchMedia("(prefers-color-scheme: light)");
+  if (mq && mq.addEventListener) mq.addEventListener("change", (e) => { if (!storeGet("theme", null)) paint(e.matches ? "light" : "dark"); });
 }
 
 /* ------------------------------------------------------------------ nav + reveal */
@@ -369,6 +398,7 @@ function initDocs() {
   window.addEventListener("load", () => window.scrollTo({ top: 0 }));
 }
 
+initTheme();
 initNav();
 initCode();
 initCodeTabs();

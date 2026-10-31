@@ -102,7 +102,7 @@ On first run, `run_all.py` creates `.env` from `.env.example`, generates `SECRET
 
 Set `DEMO_MODE=on` in `.env` to let the sign-in card pre-fill the username for the picked role and show "Demo accounts are configured in .env". Passwords are never shown, and the role always comes from the account on the server, not from the picked tab.
 
-Tests: `python -m pytest`. There are 197 tests; they are hermetic and never read your `.env` or call real APIs.
+Tests: `python -m pytest`. There are 198 tests; they are hermetic and never read your `.env` or call real APIs.
 
 ## Sign-in, roles and audit
 
@@ -213,6 +213,6 @@ integration_platform/  config.py (models, validation, ${NAME} resolution) · eng
 configs/integrations/  github, okta, jira, nvd (real) · cisa_kev (added live)
 configs/actions/       create_jira_ticket.yaml (real Jira, project KAN) · slack_failure_alert.yaml (B-4)
 configs/examples/      cisa_kev.yaml (what the live demo creates)
-tests/                 197 tests, incl. test_access.py (roles, audit), test_public.py (public pages, sign-in) and test_git_hygiene.py
+tests/                 198 tests, incl. test_access.py (roles, audit), test_public.py (public pages, sign-in) and test_git_hygiene.py
 tests/fakes/           in-process fake tools for the tests (CloudTrail, Firewall, OAuth2 Okta, Jira) + their configs and kev.json
 ```
