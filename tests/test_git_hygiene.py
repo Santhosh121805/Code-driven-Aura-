@@ -11,6 +11,7 @@ import yaml
 from tests.conftest import ROOT
 
 SECRET_KEYS = re.compile(r"token|password|secret|api_?key|client_secret|webhook", re.I)
+NOT_SECRET = {"SECRET_AGE_OVERRIDES"}  # setting names that contain "secret" but hold no secret
 SECRET_FIELDS = {"token", "password", "api_key", "client_secret", "secret"}  # config fields that hold secrets
 SECRET_PATTERNS = [
     re.compile(r"gh[pousr]_[A-Za-z0-9]{30,}"),            # GitHub classic tokens
@@ -35,7 +36,7 @@ def env_secret_values() -> dict[str, str]:
             continue
         key, _, value = line.partition("=")
         key, value = key.strip(), value.strip().strip('"').strip("'")
-        if key.startswith("MOCK_") or len(value) < 8 or value.startswith("http://localhost"):
+        if key.startswith("MOCK_") or key in NOT_SECRET or len(value) < 8 or value.startswith("http://localhost"):
             continue
         if SECRET_KEYS.search(key) or key == "SECRETS_KEY":
             out[key] = value
