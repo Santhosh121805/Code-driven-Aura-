@@ -154,8 +154,9 @@ async def require_sign_in(request: Request, call_next):
 
 
 class LoginIn(BaseModel):
-    username: str
-    password: str
+    username: str = ""
+    password: str = ""
+    role: str | None = None  # only used with DEMO_OPEN_SIGNIN=on (the picked tab); otherwise ignored
 
 
 INVALID_LOGIN = "Invalid username or password"  # one message: never say which part was wrong
@@ -163,7 +164,15 @@ INVALID_LOGIN = "Invalid username or password"  # one message: never say which p
 
 @app.post("/api/auth/login")
 def login(body: LoginIn, request: Request, response: Response) -> dict[str, Any]:
-    """The role always comes from the account on the server; anything else the client sends (e.g. a picked tab) is ignored."""
+    """The role comes from the account on the server; the picked tab is ignored. Exception: DEMO_OPEN_SIGNIN=on accepts
+    any credentials and uses the picked role (live demos), still audited."""
+    if auth.open_signin():
+        role = body.role if body.role in auth.ROLES else "viewer"
+        user = (body.username.strip() or role)[:64]
+        response.set_cookie(auth.COOKIE, auth.issue_session(user, role), max_age=auth.SESSION_SECONDS,
+                            httponly=True, samesite="lax", secure=request.url.scheme == "https", path="/")
+        _audit(user, role, "Signed in (open demo sign-in)", None, "ok")
+        return {"user": user, "role": role}
     client = request.client.host if request.client else "unknown"
     wait = auth.cooldown_left(client, body.username)
     if wait:
@@ -185,7 +194,7 @@ def login(body: LoginIn, request: Request, response: Response) -> dict[str, Any]
 def login_options() -> dict[str, Any]:
     """Public: what the sign-in card may show. Demo mode pre-fills usernames per role; passwords are never exposed."""
     demo = auth.demo_mode()
-    return {"demo": demo, "usernames": auth.demo_usernames() if demo else {}}
+    return {"demo": demo, "usernames": auth.demo_usernames() if demo else {}, "open": auth.open_signin()}
 
 
 @app.post("/api/auth/logout")

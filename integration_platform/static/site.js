@@ -258,12 +258,17 @@ function initSignin() {
   if (!form) return;
   const user = $("#username"), pass = $("#password"), btn = $("#signinBtn"), err = $("#signinError");
   const modal = $("#signinModal");
-  let usernames = {}, cooldownTimer = null, opener = null;
+  let usernames = {}, cooldownTimer = null, opener = null, openSignin = false;
 
   // Demo mode pre-fills usernames per role. Passwords never come from the server.
   fetch("/api/auth/options", { credentials: "same-origin" }).then((r) => (r.ok ? r.json() : {})).then((o) => {
     usernames = o.usernames || {};
-    $("#demoHint").classList.toggle("hidden", !o.demo);
+    openSignin = !!o.open;
+    $("#demoHint").classList.toggle("hidden", !o.demo && !openSignin);
+    if (openSignin) {  // demo: any credentials work; the tab picks the role
+      $("#demoHint").textContent = "Demo sign-in: any username and password work. The tab above picks the role.";
+      pass.placeholder = "anything";
+    }
     if (!user.value) prefill(storeGet("signinRole", "admin"));
   }).catch(() => { /* the card still works without it */ });
 
@@ -320,13 +325,14 @@ function initSignin() {
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     err.textContent = "";
-    if (!user.value.trim() || !pass.value) { err.textContent = "Enter your username and password."; (user.value.trim() ? pass : user).focus(); return; }
+    if (!openSignin && (!user.value.trim() || !pass.value)) { err.textContent = "Enter your username and password."; (user.value.trim() ? pass : user).focus(); return; }
+    const role = ($('.role-switch [aria-checked="true"]', form) || {}).dataset?.role || "viewer";
     setLoading(true);
     try {
-      // Only credentials are sent: the role is decided by the server from the account.
+      // Normally only credentials are sent and the server decides the role; open demo sign-in also sends the picked tab.
       const res = await fetch("/api/auth/login", {
         method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: user.value.trim(), password: pass.value }),
+        body: JSON.stringify({ username: user.value.trim(), password: pass.value, ...(openSignin ? { role } : {}) }),
       });
       if (res.ok) { pass.value = ""; location.assign("/app#overview"); return; }
       setLoading(false);

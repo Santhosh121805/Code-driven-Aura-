@@ -101,9 +101,9 @@ def test_demo_options_prefill_usernames_but_never_passwords(monkeypatch):
     c = client()
     monkeypatch.setenv("DEMO_MODE", "on")
     on = c.get("/api/auth/options").json()
-    assert on == {"demo": True, "usernames": {"admin": "admin", "analyst": "analyst", "viewer": "viewer"}}
+    assert on == {"demo": True, "usernames": {"admin": "admin", "analyst": "analyst", "viewer": "viewer"}, "open": False}
     monkeypatch.setenv("DEMO_MODE", "")
-    assert c.get("/api/auth/options").json() == {"demo": False, "usernames": {}}
+    assert c.get("/api/auth/options").json() == {"demo": False, "usernames": {}, "open": False}
 
 
 def test_no_passwords_or_hashes_in_any_page():

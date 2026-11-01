@@ -102,8 +102,8 @@ def read_session(token: str | None, now: float | None = None) -> dict[str, str] 
     if data.get("exp", 0) < (now or time.time()):
         return None
     current = load_users().get(data.get("u"))
-    if not current or current[0] != data.get("r"):  # user removed or role changed: sign in again
-        return None
+    if (not current or current[0] != data.get("r")) and not (open_signin() and data.get("r") in ROLES):
+        return None  # user removed or role changed: sign in again (open demo sign-in has no accounts to check)
     return {"user": data["u"], "role": data["r"]}
 
 
@@ -156,6 +156,12 @@ def clear_failures(client: str, username: str) -> None:
 # ------------------------------------------------------------------ demo hint for the public sign-in card
 def demo_mode() -> bool:
     return (os.environ.get("DEMO_MODE") or "").strip().lower() in ("on", "1", "true", "yes")
+
+
+def open_signin() -> bool:
+    """DEMO_OPEN_SIGNIN=on: any username / password signs in, with the role picked on the card. For live demos only:
+    roles and the audit log still apply, but anyone who can reach the page can become admin."""
+    return (os.environ.get("DEMO_OPEN_SIGNIN") or "").strip().lower() in ("on", "1", "true", "yes")
 
 
 def demo_usernames() -> dict[str, str]:

@@ -163,3 +163,23 @@ def test_audit_names_what_was_saved_even_without_a_name_in_the_url(db, monkeypat
     log = [(e["action"], e["target"]) for e in db.list_audit()]
     assert ("Created integration", "okta_wizard") in log and ("Stored secret", "MY_TOOL_TOKEN") in log
     assert not any("s3cr3t-value-123" in str(e) for e in db.list_audit())
+
+
+def test_open_demo_signin_accepts_any_credentials_with_the_picked_role(db, monkeypatch):
+    monkeypatch.setenv("DEMO_OPEN_SIGNIN", "on")
+    c = TestClient(api.app)
+    assert c.get("/api/auth/options").json()["open"] is True
+    r = c.post("/api/auth/login", json={"username": "judge", "password": "anything", "role": "analyst"})
+    assert r.json() == {"user": "judge", "role": "analyst"}
+    assert c.post("/api/integrations/github/disable").status_code == 403  # roles still apply
+    c2 = TestClient(api.app)
+    assert c2.post("/api/auth/login", json={"username": "", "password": "", "role": "root"}).json() == {"user": "viewer", "role": "viewer"}
+    assert db.list_audit()[0]["action"] == "Signed in (open demo sign-in)"
+
+
+def test_open_demo_signin_is_off_by_default(db, monkeypatch):
+    monkeypatch.delenv("DEMO_OPEN_SIGNIN", raising=False)
+    c = TestClient(api.app)
+    assert c.get("/api/auth/options").json()["open"] is False
+    r = c.post("/api/auth/login", json={"username": "admin", "password": "random", "role": "admin"})
+    assert r.status_code == 401  # real passwords required; the picked role is ignored
