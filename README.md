@@ -3,11 +3,13 @@
 
 # PlugSec
 
+<img src="docs/images/logo.svg" alt="PlugSec logo" width="72">
+
 **Connect any security tool with config, not code.**
 
 </div>
 
-![PlugSec Overview page](docs/images/overview-dark.png)
+
 
 ## The problem
 
@@ -44,7 +46,8 @@ flowchart LR
 4. **Convert:** every record becomes a row in one of four common tables, with one time format and one severity scale.
 5. **Show and act:** dashboard, health per tool, Jira tickets for serious events, Slack alerts when a tool keeps failing.
 
-<img src="docs/images/logo.svg" alt="PlugSec logo" width="72">
+## Overview
+![PlugSec Overview page](docs/images/overview-dark.png)
 
 ## What makes it different
 
