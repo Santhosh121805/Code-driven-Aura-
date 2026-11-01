@@ -32,7 +32,7 @@ from integration_platform import ai_mapper, auth, catalog, demo, demo_mock, logm
 from integration_platform.actions import ActionRunner  # noqa: E402
 from integration_platform.alerts import FailureAlerter  # noqa: E402
 from integration_platform.db import TABLES, Database  # noqa: E402
-from integration_platform.engine import EngineError, dry_run_integration, extract_records, fetch_sample  # noqa: E402
+from integration_platform.engine import GUARD_SOURCE, EngineError, dry_run_integration, extract_records, fetch_sample  # noqa: E402
 from integration_platform.normaliser import search as jmes_search  # noqa: E402
 from integration_platform.scheduler import SEEDED_INTEGRATIONS, Registry  # noqa: E402
 from integration_platform.vault import Vault, connector_secret_status, ensure_secrets_key, parse_age_overrides, secret_refs  # noqa: E402
@@ -477,7 +477,7 @@ def get_integration(name: str) -> dict[str, Any]:
     out = {**_summary(cfg), "config": _dump(cfg), "yaml": to_yaml(cfg), "recent_runs": state.db.recent_runs(name, 15)}
     st = out["health"]["state"]
     if st and st["state"] == "suspicious" and st["detail"].get("event_id"):
-        out["guard_event"] = state.db.get_event(name, st["detail"]["event_id"])
+        out["guard_event"] = state.db.get_event(GUARD_SOURCE, st["detail"]["event_id"])
     return out
 
 
@@ -627,7 +627,8 @@ MOCK_LABEL = re.compile(r"\bmock\b", re.I)
 
 def mock_sources() -> tuple[str, ...]:
     """Integrations labelled "(Mock)" (every mock must say so). The live data views leave them out; the demo controls
-    and the Integrations page still show them. Asking for one source by name still returns its records."""
+    and the Integrations page still show them. Asking for one source by name still returns its records.
+    Platform alerts (source "plugsec_guard", e.g. token abuse on a mock connector) are not tool data: always shown."""
     registry = getattr(state, "registry", None)  # unit tests may run without one
     integrations = getattr(registry, "integrations", {}) or {}
     return tuple(sorted(name for name, cfg in integrations.items() if MOCK_LABEL.search(cfg.display_name)))

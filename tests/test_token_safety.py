@@ -12,7 +12,7 @@ from cryptography.fernet import Fernet
 from integration_platform import config, logmask, scheduler
 from integration_platform.actions import ActionRunner
 from integration_platform.config import MissingSecretError, resolve_env, risky_scopes
-from integration_platform.engine import run_integration
+from integration_platform.engine import GUARD_SOURCE, run_integration
 from integration_platform.vault import Vault, connector_secret_status, ensure_secrets_key, parse_age_overrides, secret_refs
 from tests.fakes import mock_jira
 from tests.conftest import load, no_sleep, okta_config
@@ -147,10 +147,11 @@ async def test_guard_flags_bulk_export_raises_critical_alert_and_ticket(db, jira
     r = await run_integration(cfg, db, runner.handle, transport=volume(240, 1000), sleep=no_sleep)  # ~20x
     s = r["suspicious"]
     assert r["status"] == "suspicious" and s["records"] == 240 and s["baseline"] == 12 and s["threshold"] == 60 and s["ratio"] == 20.0
-    event = db.get_event("okta", s["event_id"])
-    assert event["severity"] == "critical" and event["description"] == "Possible token abuse: abnormal data volume from Okta" and event["type"] == "token_abuse"
+    event = db.get_event(GUARD_SOURCE, s["event_id"])
+    assert event["severity"] == "critical" and event["type"] == "token_abuse" and event["resource"] == "okta"
+    assert event["description"] == "Possible token abuse: abnormal data volume from Okta: 240 records vs baseline 12"
     ticket = next(t for t in mock_jira._tickets if "token abuse" in t["summary"])
-    assert ticket["summary"] == "[CRITICAL] Possible token abuse: abnormal data volume from Okta"
+    assert ticket["summary"] == "[CRITICAL] Possible token abuse: abnormal data volume from Okta: 240 records vs baseline 12"
     assert event["ticket_key"] == ticket["key"]
     assert db.baseline_counts("okta", 10) == [12, 12, 12]  # suspicious run excluded from the baseline
 

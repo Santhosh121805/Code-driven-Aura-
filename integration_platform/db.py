@@ -147,6 +147,7 @@ class Database:
                 self._conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             self._conn.executescript(SCHEMA)
             self._add_new_columns()
+            self._move_guard_events()
             self._conn.execute("CREATE INDEX IF NOT EXISTS idx_events_resource ON events (source, resource)")
             self._conn.commit()
 
@@ -157,6 +158,12 @@ class Database:
             for column in ENTITY_FIELDS[entity]:
                 if column not in have:
                     self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
+
+    def _move_guard_events(self) -> None:
+        """Guard alerts used to be stored under the connector's source; they are platform events now (source
+        "plugsec_guard", the connector in `resource`), so a mock connector's alert is never hidden with its data."""
+        self._conn.execute("UPDATE events SET resource = COALESCE(resource, source), source = 'plugsec_guard' "
+                           "WHERE stream = 'exfiltration_guard' AND source != 'plugsec_guard'")
 
     def _exec(self, sql: str, params: tuple | list = ()) -> sqlite3.Cursor:
         with self._lock:

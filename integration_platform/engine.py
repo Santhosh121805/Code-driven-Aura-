@@ -512,6 +512,7 @@ def load_custom_step(path: str) -> Any:
 
 # ---------------------------------------------------------------- exfiltration guard
 OnNewEvent = Callable[[dict[str, Any]], Awaitable[None]]
+GUARD_SOURCE = "plugsec_guard"  # guard alerts are PlugSec's own security events, not tool data: never hidden with mocks
 
 
 def check_exfiltration(cfg: IntegrationConfig, history: list[int], fetched: int) -> dict[str, Any] | None:
@@ -528,13 +529,16 @@ def check_exfiltration(cfg: IntegrationConfig, history: list[int], fetched: int)
 
 
 def guard_event(cfg: IntegrationConfig, run_id: int, detail: dict[str, Any], fetched_at: str) -> dict[str, Any]:
-    """The critical normalised event raised by the guard; it flows through actions like any other alert."""
+    """The critical normalised event raised by the guard; it flows through actions like any other alert. Its source
+    is the platform (PlugSec guard); `resource` names the affected connector."""
     return {
-        "entity": "event", "source": cfg.name, "stream": "exfiltration_guard", "id": f"guard-{run_id}",
-        "type": "token_abuse", "severity": "critical", "timestamp": fetched_at,
-        "description": f"Possible token abuse: abnormal data volume from {cfg.display_name}",
+        "entity": "event", "source": GUARD_SOURCE, "stream": "exfiltration_guard", "id": f"guard-{run_id}",
+        "type": "token_abuse", "severity": "critical", "timestamp": fetched_at, "resource": cfg.name,
+        "description": f"Possible token abuse: abnormal data volume from {cfg.display_name}: "
+                       f"{detail['records']:,} records vs baseline {detail['baseline']:,g}",
         "host": None, "src_ip": None, "dst_ip": None, "user": None, "fetched_at": fetched_at,
-        "raw": {"detector": "exfiltration_guard", "connector": cfg.name, "run_id": run_id, **detail},
+        "raw": {"detector": "exfiltration_guard", "connector": cfg.name, "connector_name": cfg.display_name,
+                "run_id": run_id, **detail},
     }
 
 

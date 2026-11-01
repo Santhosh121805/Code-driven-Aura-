@@ -297,7 +297,7 @@ async function loadIntegrations() {
   const data = await api("/api/integrations");
   state.integrations = data.items;
   state.loadErrors = data.load_errors || {};
-  state.names = Object.fromEntries(data.items.map((i) => [i.name, i.display_name]));
+  state.names = { plugsec_guard: "PlugSec guard", ...Object.fromEntries(data.items.map((i) => [i.name, i.display_name])) };
   state.notifications = data.notifications || [];
   renderBanner();
   const options = ['<option value="">All sources</option>'].concat(
@@ -392,10 +392,26 @@ async function renderEvents() {
     : emptyRow(6, filtered ? "No matching events" : "No events yet", filtered ? ": try a wider time range or clear the filters." : ": run a connection to pull data.");
 }
 
+/** Token-abuse alert: which connector, baseline vs actual volume, and the way to it (Resume / Revoke). */
+function guardBlock(e) {
+  const g = e.raw || {}, name = g.connector;
+  if (e.type !== "token_abuse" || !name) return "";
+  const i = state.integrations.find((x) => x.name === name), status = i ? i.health.status : null;
+  const btns = !i ? '<span class="muted sm">This connector no longer exists.</span>'
+    : [`<a class="btn secondary sm" href="#integrations" data-open-int="${esc(name)}">Open connector</a>`,
+       status === "suspicious" ? gatedBtn("admin", "Resume (false positive)", `data-act="resume" data-name="${esc(name)}"`) : "",
+       status !== "revoked" ? gatedBtn("admin", "Revoke token", `data-act="revoke" data-name="${esc(name)}"`, "btn danger sm") : '<span class="pill bad"><i></i>Revoked</span>'].join("");
+  return `<div class="notice warn"><b>Exfiltration guard: ${esc(g.connector_name || srcName(name))}</b>
+    ${kvList([["connector", `<span class="mono">${esc(name)}</span>${status ? ` · ${esc(cap(status))}` : ""}`],
+      ["records this run", `<b>${fmtN(g.records)}</b>`], ["baseline (median)", `${fmtN(g.baseline)} over ${fmtN(g.baseline_runs)} runs`],
+      ["threshold", `${fmtN(g.threshold)} (${esc(g.multiplier)}x)`], ["ratio", `${esc(g.ratio)}x normal`]])}
+    <div style="display:flex;gap:8px;margin-top:10px;align-items:center">${btns}</div></div>`;
+}
+
 function eventDrawer(e) {
   const { raw, ...norm } = e;
   const fields = ["id", "type", "severity", "timestamp", "description", "host", "src_ip", "dst_ip", "user"];
-  openDrawer(`${sevPill(e.severity)} ${sourceTag(e.source)}`, e.description || e.id, `
+  openDrawer(`${sevPill(e.severity)} ${sourceTag(e.source)}`, e.description || e.id, `${guardBlock(e)}
     ${kvList(fields.map((f) => [f, f === "severity" ? sevPill(norm[f]) : f === "timestamp" ? `${esc(fullTime(norm[f]))} <span class="muted">(${esc(relTime(norm[f]))})</span>`
       : norm[f] ? `<span class="${["id", "host", "src_ip", "dst_ip", "user"].includes(f) ? "mono" : ""}">${esc(norm[f])}</span>` : '<span class="muted">-</span>']))}
     <div><div class="section-title">Source</div>${kvList([["source", esc(srcName(e.source))], ["stream", `<span class="mono">${esc(e.stream || "-")}</span>`],
