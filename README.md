@@ -1,6 +1,5 @@
 <div align="center">
 
-<img src="docs/images/logo.svg" alt="PlugSec logo" width="72">
 
 # PlugSec
 
@@ -45,6 +44,8 @@ flowchart LR
 4. **Convert:** every record becomes a row in one of four common tables, with one time format and one severity scale.
 5. **Show and act:** dashboard, health per tool, Jira tickets for serious events, Slack alerts when a tool keeps failing.
 
+<img src="docs/images/logo.svg" alt="PlugSec logo" width="72">
+
 ## What makes it different
 
 | | |
@@ -87,7 +88,7 @@ cp .env.example .env        # fill in keys only for the tools you want
 python run_all.py
 ```
 
-Open **http://localhost:8000** and sign in. The first run prints the admin, analyst and viewer sign-ins once.
+Open home page and sign in. The first run prints the admin, analyst and viewer sign-ins once.
 
 ## Add a tool in 2 minutes
 
@@ -151,6 +152,8 @@ Severity is always one of: critical, high, medium, low, info.
 Python · FastAPI · SQLite · httpx · pydantic · JMESPath · APScheduler · Fernet encryption · plain HTML/JS
 
 Run the automated tests with `python -m pytest` (they use fake APIs, never real ones).
+
+
 
 ## Project structure
 
