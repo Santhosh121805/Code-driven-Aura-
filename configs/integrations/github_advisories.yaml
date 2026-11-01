@@ -1,0 +1,85 @@
+name: github_advisories
+display_name: GitHub Security Advisories
+enabled: true
+base_url: https://api.github.com
+auth:
+  type: bearer
+  token: ${github_token}
+  optional: false
+scopes:
+- 'Accept:'
+- application/vnd.github+json
+- and
+- 'X-GitHub-Api-Version:'
+- '2022-11-28'
+headers: {}
+schedule_seconds: 3600
+retry:
+  max_retries: 3
+  backoff: exponential
+  base_seconds: 1.0
+  max_seconds: 30.0
+rate_limit:
+  min_remaining: 1
+  max_wait_seconds: 120.0
+  max_429_retries: 5
+  min_interval_seconds: 0.0
+  fallback_wait_seconds: 0.0
+streams:
+- name: critical_advisories
+  entity: event
+  endpoint: /advisories
+  method: GET
+  params: {}
+  headers: {}
+  timeout_seconds: 15.0
+  pagination:
+    type: page
+    page_param: page
+    size_param: page_size
+    page_size: 10
+    start_page: 1
+    max_pages: 2
+  records_path: vulnerabilities
+  mapping:
+    id: cveID
+    type: '''vulnerability'''
+    timestamp: dateAdded
+    description: vulnerabilityName
+  transforms:
+    severity_map: {}
+    time_format: iso8601
+    default_severity: high
+  requires_env: []
+  merge_into_parent: false
+- name: malware_advisories
+  entity: event
+  endpoint: /advisories
+  method: GET
+  params: {}
+  headers: {}
+  timeout_seconds: 15.0
+  pagination:
+    type: page
+    page_param: page
+    size_param: page_size
+    page_size: 2
+    start_page: 1
+    max_pages: 2
+  mapping:
+    id: ghsa_id
+    timestamp: published_at
+  transforms:
+    severity_map: {}
+    time_format: iso8601
+    default_severity: info
+  requires_env: []
+  merge_into_parent: false
+secret_max_age_days: 90
+alert_after_failures: 3
+exfiltration_guard:
+  enabled: true
+  multiplier: 5.0
+  min_records: 50
+  baseline_runs: 10
+  min_baseline_runs: 3
