@@ -130,6 +130,17 @@ def _audit(user: str, role: str | None, action: str, target: str | None, outcome
 
 
 @app.middleware("http")
+async def always_fresh_ui(request: Request, call_next):
+    """Pages and /static files: the browser must revalidate on every load (a 304 when unchanged), so it never mixes a
+    new page with an old cached app.js / site.css after an update."""
+    response = await call_next(request)
+    path = request.url.path
+    if path.startswith("/static/") or path in ("/", "/app", "/docs", "/login"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
+@app.middleware("http")
 async def require_sign_in(request: Request, call_next):
     path = request.url.path
     if not path.startswith("/api/") or path in PUBLIC_API:

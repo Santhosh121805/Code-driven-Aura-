@@ -161,3 +161,11 @@ def test_theme_is_set_before_first_paint_and_shared_with_the_app():
         assert "prefers-color-scheme: light" in head and "try {" in head, name
     for name in ("landing.html", "docs.html", "login.html"):
         assert 'class="icon-btn theme-toggle"' in (STATIC / name).read_text(encoding="utf-8"), name
+
+
+def test_pages_and_static_files_are_always_revalidated():
+    from fastapi.testclient import TestClient
+    from integration_platform import api
+    c = TestClient(api.app)
+    for path in ("/", "/docs", "/login", "/static/app.js", "/static/site.css"):
+        assert c.get(path).headers.get("cache-control") == "no-cache", path

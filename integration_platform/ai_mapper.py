@@ -18,7 +18,7 @@ import httpx
 import jmespath
 
 from integration_platform import logmask
-from integration_platform.config import ENTITY_FIELDS, SEVERITIES, TIME_FIELD
+from integration_platform.config import ENTITY_FIELDS, SEVERITIES, STRUCTURED_FIELDS, TIME_FIELD
 from integration_platform.normaliser import parse_time
 
 log = logging.getLogger("ai_mapper")
@@ -380,8 +380,10 @@ def suggest_severity_map(values: list[Any]) -> dict[str, str]:
 def rule_based_mapping(examples: dict[str, list[Any]], entity: str = "event") -> dict[str, tuple[str, float]]:
     """Greedy best-match assignment: each common field gets at most one path, each path one field."""
     fields = ENTITY_FIELDS[entity]
+    structured = STRUCTURED_FIELDS.get(entity, ())
+    scalar = lambda values: not any(isinstance(v, (dict, list)) for v in values)  # noqa: E731
     candidates = [(score, field, path) for field in fields for path, values in examples.items()
-                  if (score := _score(field, path, values, entity)) >= 0.4]
+                  if (field in structured or scalar(values)) and (score := _score(field, path, values, entity)) >= 0.4]
     candidates.sort(key=lambda c: (-c[0], fields.index(c[1]), c[2].count(".")))
     chosen: dict[str, tuple[str, float]] = {}
     used: set[str] = set()
@@ -590,13 +592,17 @@ def verify_suggestion(suggestion: dict[str, Any], sample: Any, detected_records_
             entry.update(status="needs_manual", path="", confidence=0.0, note=f"Values like {str(present[0])[:60]!r} are not severities")
         elif entry["status"] == "ok":
             entry["example"] = present[0]
-            mismatch = (
-                (field == TIME_FIELD[entity] and parse_time(present[0]) is None)
-                or (field in ("src_ip", "dst_ip", "ip") and not _is_ip(present[0]))
-                or (field == "email" and not (isinstance(present[0], str) and EMAIL.match(present[0])))
-                or isinstance(present[0], (dict, list))
+            # Values the normaliser would reject (a list for a single-value field, an unreadable time, a non-IP in an IP
+            # field) would quarantine every record: such paths are dropped, never applied.
+            wrong = (
+                (isinstance(present[0], (dict, list)) and field not in STRUCTURED_FIELDS.get(entity, ()))
+                or (field == TIME_FIELD[entity] and parse_time(present[0]) is None)
+                or (field in ("src_ip", "dst_ip", "ip") and not all(_is_ip(v) for v in present))
             )
-            if mismatch:
+            if wrong:
+                entry.update(status="needs_manual", path="", confidence=0.0,
+                             note=f"'{path}' holds values like {str(present[0])[:50]!r}, not a {field}")
+            elif field == "email" and not (isinstance(present[0], str) and EMAIL.match(present[0])):
                 entry["confidence"] = round(entry["confidence"] * 0.4, 2)
                 entry["status"] = "low_confidence"
                 entry["note"] = f"Value {present[0]!r} doesn't look like a {field}"

@@ -97,9 +97,24 @@ def test_verification_drops_fake_path_and_flags_type_mismatch():
                   "confidence": {"host": 0.9, "timestamp": 0.9, "description": 0.95}}
     v = verify_suggestion(suggestion, CLOUDTRAIL_SAMPLE, "Records", "event")
     assert v["fields"]["host"]["status"] == "needs_manual" and v["fields"]["host"]["path"] == ""
-    assert v["fields"]["timestamp"]["status"] == "low_confidence" and v["fields"]["timestamp"]["confidence"] < 0.5
+    assert v["fields"]["timestamp"]["status"] == "needs_manual" and v["fields"]["timestamp"]["path"] == ""  # unreadable time: dropped
     assert v["fields"]["description"]["status"] == "ok" and v["fields"]["description"]["confidence"] == 0.95
     assert "colour" not in v["fields"]
+
+
+def test_values_the_normaliser_would_reject_are_never_suggested():
+    """Real case: the AI mapped KEV's cwes (a list) to resource and vendorProject to src_ip; every record was quarantined."""
+    sample = {"vulnerabilities": [{"cveID": "CVE-2024-1", "dateAdded": "2024-05-01", "vendorProject": "Acme", "cwes": ["CWE-79"],
+                                   "shortDescription": "XSS in Acme portal"}]}
+    v = verify_suggestion({"records_path": "vulnerabilities", "mapping": {"id": "cveID", "timestamp": "dateAdded", "resource": "cwes",
+                                                                         "src_ip": "vendorProject", "description": "shortDescription"}},
+                          sample, "vulnerabilities", "event")
+    assert v["fields"]["resource"]["status"] == "needs_manual" and v["fields"]["src_ip"]["status"] == "needs_manual"
+    assert {f for f, e in v["fields"].items() if e["status"] == "ok"} == {"id", "timestamp", "description"}
+    rules = suggest_mapping(sample, "event", use_llm=False)["mapping"]
+    assert "cwes" not in rules.values()  # the rule-based fallback skips lists too
+    repo = verify_suggestion({"mapping": {"topics": "tags"}}, [{"tags": ["a", "b"]}], None, "repository")
+    assert repo["fields"]["topics"]["status"] == "ok"  # list fields (topics, languages) still take lists
 
 
 def test_verification_rejects_fields_from_another_entity():
