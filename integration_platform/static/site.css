@@ -375,3 +375,12 @@ html[data-theme="light"]:has(.site) { background: #FAFAFA; }
   .term-line, .feed-row { transition: none; }
   html:has(.site) { scroll-behavior: auto; }
 }
+
+/* ------------------------------------------------------------------ hero: chaos -> PlugSec -> order (one inline SVG) */
+.hero-flow { display: none; width: 100%; max-width: 620px; height: auto; overflow: visible; }
+@media (min-width: 900px) {
+  .hero-art { width: 440px; }
+  .hero-art .symbol { display: none; }
+  .hero-flow { display: block; }
+}
+@media (min-width: 1200px) { .hero-art { width: 620px; margin-right: -84px; } }  /* the last 84px use the free page margin: the headline keeps its 3 lines */
