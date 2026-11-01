@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96" role="img" aria-label="PlugSec logo">
+  <rect width="96" height="96" rx="24" fill="#2DD4BF"/>
+  <g transform="translate(24 24)" fill="none" stroke="#0B0F14" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+    <path transform="scale(2)" d="M8 3v5m8-5v5M5 8h14v3a7 7 0 0 1-14 0zm7 10v3" stroke-width="1.2"/>
+  </g>
+</svg>
